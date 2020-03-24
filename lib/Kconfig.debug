@@ -1974,6 +1974,14 @@ config BUG_ON_DATA_CORRUPTION
 
 source "samples/Kconfig"
 
+config CC_WERROR
+	bool "Treat all compile warnings as errors"
+	default n
+	help
+	  Select this option to set compiler warnings as errors,
+	  to prevent easily-fixable problems from creeping into
+	  the codebase.
+
 source "lib/Kconfig.kgdb"
 
 source "lib/Kconfig.ubsan"
