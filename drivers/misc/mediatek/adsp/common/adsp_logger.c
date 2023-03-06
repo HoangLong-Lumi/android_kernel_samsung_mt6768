@@ -25,7 +25,7 @@ unsigned int adsp_log_poll(struct log_ctrl_s *ctrl)
 	if (!ctrl->inited)
 		return 0;
 
-	if (buf_info->r_pos != buf_info->w_pos)
+	if ((buf_info->r_pos != buf_info->w_pos) || !(ctrl->enable))
 		return POLLIN | POLLRDNORM;
 
 	return 0;

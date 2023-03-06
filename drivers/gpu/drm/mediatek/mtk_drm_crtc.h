@@ -51,6 +51,7 @@
 
 #define PRIMARY_OVL_EXT_LAYER_NR 6L
 
+#define MTK_HDR10P_PROPERTY_FLAG 2
 
 #define pgc	_get_context()
 
@@ -703,12 +704,15 @@ struct mtk_drm_crtc {
 	unsigned int avail_modes_num;
 	struct drm_display_mode *avail_modes;
 	struct timeval vblank_time;
+	unsigned int max_fps;
 
 	bool mipi_hopping_sta;
 	bool panel_osc_hopping_sta;
 	bool vblank_en;
 
 	atomic_t already_config;
+
+	int config_cnt;
 
 	bool layer_rec_en;
 	unsigned int fps_change_index;
@@ -731,6 +735,16 @@ struct mtk_drm_crtc {
 	struct task_struct *cwb_task;
 	wait_queue_head_t cwb_wq;
 	atomic_t cwb_task_active;
+
+	ktime_t eof_time;
+	struct task_struct *signal_present_fece_task;
+	struct cmdq_cb_data cb_data;
+	atomic_t cmdq_done;
+	wait_queue_head_t signal_fence_task_wq;
+	int need_lock_tid;
+	int customer_lock_tid;
+
+	int frame_update_cnt;
 };
 
 struct mtk_crtc_state {
@@ -759,6 +773,8 @@ struct mtk_cmdq_cb_data {
 	struct drm_crtc			*crtc;
 	unsigned int misc;
 };
+
+extern unsigned int te_cnt;
 
 int mtk_drm_crtc_enable_vblank(struct drm_device *drm, unsigned int pipe);
 void mtk_drm_crtc_disable_vblank(struct drm_device *drm, unsigned int pipe);
@@ -886,6 +902,9 @@ void mtk_drm_layer_dispatch_to_dual_pipe(
 	struct mtk_plane_state *plane_state_l,
 	struct mtk_plane_state *plane_state_r,
 	unsigned int w);
+unsigned int dual_pipe_comp_mapping(unsigned int comp_id);
+int mtk_drm_crtc_set_panel_hbm(struct drm_crtc *crtc, bool en);
+int mtk_drm_crtc_hbm_wait(struct drm_crtc *crtc, bool en);
 /* ********************* Legacy DISP API *************************** */
 unsigned int DISP_GetScreenWidth(void);
 unsigned int DISP_GetScreenHeight(void);
@@ -898,5 +917,10 @@ struct golden_setting_context *
 void mtk_crtc_start_for_pm(struct drm_crtc *crtc);
 void mtk_crtc_stop_for_pm(struct mtk_drm_crtc *mtk_crtc, bool need_wait);
 bool mtk_crtc_frame_buffer_existed(void);
+int m4u_sec_init(void);
 
+int mtk_drm_ioctl_get_pq_caps(struct drm_device *dev, void *data,
+	struct drm_file *file_priv);
+int mtk_drm_ioctl_set_pq_caps(struct drm_device *dev, void *data,
+	struct drm_file *file_priv);
 #endif /* MTK_DRM_CRTC_H */

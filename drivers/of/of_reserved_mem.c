@@ -277,6 +277,7 @@ void __init fdt_init_reserved_mem(void)
 		int len;
 		const __be32 *prop;
 		int err = 0;
+		bool nomap;
 
 		prop = of_get_flat_dt_prop(node, "phandle", &len);
 		if (!prop)
@@ -287,8 +288,17 @@ void __init fdt_init_reserved_mem(void)
 		if (rmem->size == 0)
 			err = __reserved_mem_alloc_size(node, rmem->name,
 						 &rmem->base, &rmem->size);
-		if (err == 0)
+		if (err == 0) {
 			__reserved_mem_init_node(rmem);
+			nomap = of_get_flat_dt_prop(node, "no-map", NULL) != NULL;
+#ifdef CONFIG_ION_RBIN_HEAP
+			if (of_get_flat_dt_prop(node, "ion,recyclable", NULL))
+				rmem->reusable = true;
+#endif
+			record_memsize_reserved(rmem->name, rmem->base,
+						rmem->size, nomap,
+						rmem->reusable);
+		}
 	}
 }
 
@@ -405,3 +415,29 @@ void of_reserved_mem_device_release(struct device *dev)
 	rmem->ops->device_release(rmem, dev);
 }
 EXPORT_SYMBOL_GPL(of_reserved_mem_device_release);
+
+/**
+ * of_reserved_mem_lookup() - acquire reserved_mem from a device node
+ * @np:		node pointer of the desired reserved-memory region
+ *
+ * This function allows drivers to acquire a reference to the reserved_mem
+ * struct based on a device node handle.
+ *
+ * Returns a reserved_mem reference, or NULL on error.
+ */
+struct reserved_mem *of_reserved_mem_lookup(struct device_node *np)
+{
+	const char *name;
+	int i;
+
+	if (!np->full_name)
+		return NULL;
+
+	name = kbasename(np->full_name);
+	for (i = 0; i < reserved_mem_count; i++)
+		if (!strcmp(reserved_mem[i].name, name))
+			return &reserved_mem[i];
+
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(of_reserved_mem_lookup);

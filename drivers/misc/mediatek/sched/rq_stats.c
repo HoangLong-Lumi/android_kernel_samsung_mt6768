@@ -986,7 +986,7 @@ static ssize_t store_overutil(struct kobject *kobj,
 	int ret, i;
 
 	ret = sscanf(buf, "%u %u\n", &val[0], &val[1]);
-	if ( ret <= 0 || OVERUTIL_THRESHOLD_SIZE <= ret)
+	if (ret <= 0 || OVERUTIL_THRESHOLD_SIZE <= ret)
 		return -EINVAL;
 
 	if (ret == 1) {

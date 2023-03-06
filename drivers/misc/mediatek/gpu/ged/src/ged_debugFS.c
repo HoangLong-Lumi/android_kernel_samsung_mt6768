@@ -98,7 +98,7 @@ GED_ERROR ged_debugFS_create_entry(
 	uiMode = S_IFREG;
 
 	if (psReadOps != NULL)
-		uiMode |= 0440;
+		uiMode |= 0444;
 
 	if (pfnWrite != NULL)
 		uiMode |= 0220;
@@ -120,7 +120,7 @@ GED_ERROR ged_debugFS_create_entry(
 //-----------------------------------------------------------------------------
 void ged_debugFS_remove_entry(struct dentry *psEntry)
 {
-	if (psEntry->d_inode->i_private != NULL)
+	if (psEntry != NULL && psEntry->d_inode->i_private != NULL)
 		ged_free(psEntry->d_inode->i_private,
 		sizeof(struct GED_DEBUGFS_PRIV_DATA));
 

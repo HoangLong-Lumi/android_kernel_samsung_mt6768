@@ -513,6 +513,12 @@ struct skb_shared_info {
 	 * remains valid until skb destructor */
 	void *		destructor_arg;
 
+// SEC_PRODUCT_FEATURE_KNOX_SUPPORT_VPN {
+	uid_t uid;
+	pid_t pid;
+	u_int32_t knox_mark;
+// SEC_PRODUCT_FEATURE_KNOX_SUPPORT_VPN }
+
 	/* must be last field, see pskb_expand_head() */
 	skb_frag_t	frags[MAX_SKB_FRAGS];
 };
@@ -1740,8 +1746,7 @@ static inline void skb_queue_head_init_class(struct sk_buff_head *list,
  */
 void skb_insert(struct sk_buff *old, struct sk_buff *newsk,
 		struct sk_buff_head *list);
-static inline void __attribute__((no_sanitize("object-size")))
-	__skb_insert(struct sk_buff *newsk,
+static inline void __skb_insert(struct sk_buff *newsk,
 				struct sk_buff *prev, struct sk_buff *next,
 				struct sk_buff_head *list)
 {

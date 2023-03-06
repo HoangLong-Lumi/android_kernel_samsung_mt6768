@@ -42,6 +42,9 @@
 
 #include "lens_info.h"
 #include "lens_list.h"
+#ifdef CONFIG_CAMERA_OIS_MCU
+#include "mtk_ois_mcu.h"
+#endif
 
 #define AF_DRVNAME "MAINAF"
 
@@ -90,6 +93,8 @@ static struct stAF_OisPosInfo OisPosInfo;
 static struct stAF_DrvList g_stAF_DrvList[MAX_NUM_OF_LENS] = {
 	{1, AFDRV_DW9718TAF, DW9718TAF_SetI2Cclient, DW9718TAF_Ioctl,
 	 DW9718TAF_Release, DW9718TAF_GetFileName, NULL},
+	{1, AFDRV_GT9772AF, GT9772AF_SetI2Cclient, GT9772AF_Ioctl,
+	 GT9772AF_Release, GT9772AF_GetFileName, NULL},
 	{1, AFDRV_AK7371AF, AK7371AF_SetI2Cclient, AK7371AF_Ioctl,
 	 AK7371AF_Release, AK7371AF_GetFileName, NULL},
 	{1, AFDRV_BU6424AF, BU6424AF_SetI2Cclient, BU6424AF_Ioctl,
@@ -121,12 +126,22 @@ static struct stAF_DrvList g_stAF_DrvList[MAX_NUM_OF_LENS] = {
 	 LC898212XDAF_Release, LC898212XDAF_GetFileName, NULL},
 	{1, AFDRV_DW9800WAF, DW9800WAF_SetI2Cclient, DW9800WAF_Ioctl,
 	DW9800WAF_Release, DW9800WAF_GetFileName, NULL},
+	{1, AFDRV_DW9808AF, DW9808AF_SetI2Cclient, DW9808AF_Ioctl,
+	 DW9808AF_Release, DW9808AF_GetFileName, NULL},
 	{1, AFDRV_DW9814AF, DW9814AF_SetI2Cclient, DW9814AF_Ioctl,
 	 DW9814AF_Release, DW9814AF_GetFileName, NULL},
+	{1, AFDRV_DW9818AF, DW9818AF_SetI2Cclient, DW9818AF_Ioctl,
+	 DW9818AF_Release, DW9818AF_GetFileName, NULL},
+	{1, AFDRV_DW9825AF_OIS_MCU, DW9825AF_OIS_MCU_SetI2Cclient, DW9825AF_OIS_MCU_Ioctl,
+	 DW9825AF_OIS_MCU_Release, DW9825AF_OIS_MCU_GetFileName, NULL},
 	{1, AFDRV_DW9839AF, DW9839AF_SetI2Cclient, DW9839AF_Ioctl,
 	 DW9839AF_Release, DW9839AF_GetFileName, NULL},
 	{1, AFDRV_FP5510E2AF, FP5510E2AF_SetI2Cclient, FP5510E2AF_Ioctl,
 	 FP5510E2AF_Release, FP5510E2AF_GetFileName, NULL},
+	{1, AFDRV_FP5529AF, FP5529AF_SetI2Cclient, FP5529AF_Ioctl,
+	 FP5529AF_Release, FP5529AF_GetFileName, NULL},
+	{1, AFDRV_FP5519AF, FP5519AF_SetI2Cclient, FP5519AF_Ioctl,
+	 FP5519AF_Release, FP5519AF_GetFileName, NULL},
 	{1, AFDRV_DW9718AF, DW9718AF_SetI2Cclient, DW9718AF_Ioctl,
 	 DW9718AF_Release, DW9718AF_GetFileName, NULL},
 	{1, AFDRV_GT9764AF, GT9764AF_SetI2Cclient, GT9764AF_Ioctl,
@@ -145,6 +160,8 @@ static struct stAF_DrvList g_stAF_DrvList[MAX_NUM_OF_LENS] = {
 	 LC898217AFC_Release, LC898217AFC_GetFileName, NULL},
 	{1, AFDRV_LC898229AF, LC898229AF_SetI2Cclient, LC898229AF_Ioctl,
 	 LC898229AF_Release, LC898229AF_GetFileName, NULL},
+	 {1, AFDRV_OV5645AF, OV5645AF_SetI2Cclient,
+	OV5645AF_Ioctl, OV5645AF_Release, NULL},
 	{1, AFDRV_LC898122AF, LC898122AF_SetI2Cclient, LC898122AF_Ioctl,
 	 LC898122AF_Release, LC898122AF_GetFileName, NULL},
 	{1, AFDRV_WV511AAF, WV511AAF_SetI2Cclient, WV511AAF_Ioctl,
@@ -175,6 +192,19 @@ static struct device *lens_device;
 static struct pinctrl *af_pinctrl;
 static struct pinctrl_state *af_hwen_high;
 static struct pinctrl_state *af_hwen_low;
+
+#if defined(CONFIG_CAMERA_OIS_MCU)
+
+static struct device *local_dev;
+static int ois_mcu_probe_in_af(struct device *pdev, struct pinctrl *pinctrl, const struct file_operations *af_op)
+{
+	return ois_mcu_probe(pdev, pinctrl, af_op);
+}
+static int ois_mcu_probe_set_i2c_client(struct i2c_client *i2c_client, spinlock_t *af_spinLock, int *af_opened)
+{
+	return ois_mcu_set_i2c_client(i2c_client, af_spinLock, af_opened);
+}
+#endif
 
 static int af_pinctrl_init(struct device *pdev)
 {
@@ -285,6 +315,22 @@ void AFRegulatorCtrl(int Stage)
 				#elif defined(CONFIG_MACH_MT6771)
 				regVCAMAF =
 					regulator_get(lens_device, "vldo28");
+				#elif defined(CONFIG_MACH_MT6833)
+				if (strncmp(CONFIG_ARCH_MTK_PROJECT,
+					"k6833v1_64_6360_alpha", 20) == 0) {
+					regVCAMAF =
+					regulator_get(lens_device, "vmch");
+				} else {
+					#if defined(CONFIG_REGULATOR_MT6317)
+					regVCAMAF =
+					regulator_get(lens_device, "mt6317-ldo3");
+					LOG_INF("regulator_get(%s)\n", "mt6317-ldo3");
+					#else
+					regVCAMAF =
+					regulator_get(lens_device, "vcamio");
+					LOG_INF("regulator_get(%s)\n", "vcamio");
+					#endif
+				}
 				#elif defined(CONFIG_MACH_MT6853)
 				if (strncmp(CONFIG_ARCH_MTK_PROJECT,
 					"k6853v1_64_6360_alpha", 20) == 0) {
@@ -303,6 +349,9 @@ void AFRegulatorCtrl(int Stage)
 					regVCAMAF =
 					regulator_get(lens_device, "vcamio");
 				}
+				#elif defined(CONFIG_MACH_MT6877) || defined(CONFIG_MACH_MT6781)
+				regVCAMAF =
+					regulator_get(lens_device, "rt5133-ldo3");
 				#elif defined(CONFIG_MACH_MT6885) || defined(CONFIG_MACH_MT6893)
 				if (strncmp(CONFIG_ARCH_MTK_PROJECT,
 					"k6885v1_64_alpha", 16) == 0) {
@@ -672,6 +721,11 @@ static int AF_Open(struct inode *a_pstInode, struct file *a_pstFile)
 
 	af_pinctrl_set(AF_PINCTRL_PIN_HWEN,
 			AF_PINCTRL_PINSTATE_HIGH);
+
+#if defined(CONFIG_CAMERA_OIS_MCU)
+	ois_mcu_init();
+#endif
+
 #if !defined(CONFIG_MTK_LEGACY)
 	AFRegulatorCtrl(0);
 	AFRegulatorCtrl(1);
@@ -871,6 +925,16 @@ static int AF_i2c_probe(struct i2c_client *client,
 
 	spin_lock_init(&g_AF_SpinLock);
 
+#if defined(CONFIG_CAMERA_OIS_MCU)
+	LOG_INF("E");
+	if (g_pstAF_I2Cclient && local_dev) {
+		ois_mcu_probe_set_i2c_client(g_pstAF_I2Cclient, &g_AF_SpinLock, &g_s4AF_Opened);
+		if (af_pinctrl)
+			ois_mcu_probe_in_af(local_dev, af_pinctrl, &g_stAF_fops);
+	}
+	LOG_INF("X");
+#endif
+
 	LOG_INF("Attached!!\n");
 
 	return 0;
@@ -878,10 +942,25 @@ static int AF_i2c_probe(struct i2c_client *client,
 
 static int AF_probe(struct platform_device *pdev)
 {
+	int ret = 0;
 	if (af_pinctrl_init(&pdev->dev))
 		LOG_INF("Failed to init pinctrl.\n");
-
-	return i2c_add_driver(&AF_i2c_driver);
+#if defined(CONFIG_CAMERA_OIS_MCU)
+	local_dev = &pdev->dev;
+#endif
+	ret = i2c_add_driver(&AF_i2c_driver);
+#if defined(CONFIG_CAMERA_OIS_MCU)
+	LOG_INF("E");
+	if (g_pstAF_I2Cclient && local_dev) {
+		ois_mcu_probe_set_i2c_client(g_pstAF_I2Cclient, &g_AF_SpinLock, &g_s4AF_Opened);
+		if (af_pinctrl)
+			ois_mcu_probe_in_af(local_dev, af_pinctrl, &g_stAF_fops);
+		else
+			LOG_INF("af pinctrl is null");
+	}
+	LOG_INF("X");
+#endif
+	return ret;
 }
 
 static int AF_remove(struct platform_device *pdev)

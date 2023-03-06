@@ -35,6 +35,10 @@
 
 #include "power.h"
 
+#if IS_ENABLED(CONFIG_SEC_GPIO_DVS)
+#include <linux/secgpio_dvs.h>
+#endif
+
 #define MTK_SOLUTION 1
 
 const char * const pm_labels[] = {
@@ -395,6 +399,15 @@ void __weak arch_suspend_enable_irqs(void)
 static int suspend_enter(suspend_state_t state, bool *wakeup)
 {
 	int error, last_dev;
+
+#if IS_ENABLED(CONFIG_SEC_GPIO_DVS)
+	/************************ Caution !!! ****************************/
+	/* This function must be located in appropriate SLEEP position
+	 * in accordance with the specification of each BB vendor.
+	 */
+	/************************ Caution !!! ****************************/
+	gpio_dvs_check_sleepgpio();
+#endif
 
 	error = platform_suspend_prepare(state);
 	if (error)

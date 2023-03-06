@@ -690,6 +690,16 @@ config LEDS_MLXCPLD
 	  This option enabled support for the LEDs on the Mellanox
 	  boards. Say Y to enabled these.
 
+config LEDS_SM5714
+	bool "LED support for the SM5714"
+	depends on LEDS_CLASS && MFD_SM5714
+	help
+	  This option enables support for SM5714 led chip.
+	  Say yes here to enable this.
+
+	  This driver is invoked from SM5714 PMIC.
+	  This driver will be called sm5714-fled
+
 config LEDS_USER
 	tristate "Userspace LED support"
 	depends on LEDS_CLASS
@@ -708,6 +718,19 @@ config LEDS_NIC78BX
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called leds-nic78bx.
+config LEDS_S2MU106_FLASH
+    bool "FLASH LED support for the S2MU106"
+    depends on (MFD_S2MU106) && I2C
+    help
+      If you say yes here you will get support for
+      for the LEDS_S2MU106_FLASH led chip.
+
+config LEDS_S2MU005_FLASH
+    bool "FLASH LED support for the S2MU005"
+    depends on (MFD_S2MU005) && I2C
+    help
+      If you say yes here you will get support for
+      for the LEDS_S2MU005_FLASH led chip.
 
 comment "LED Triggers"
 source "drivers/leds/trigger/Kconfig"

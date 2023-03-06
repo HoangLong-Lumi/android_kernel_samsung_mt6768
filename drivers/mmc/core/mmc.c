@@ -666,8 +666,9 @@ static int mmc_decode_ext_csd(struct mmc_card *card, u8 *ext_csd)
 					mmc_hostname(card->host));
 		}
 
-		memcpy(card->ext_csd.fwrev, &ext_csd[EXT_CSD_FIRMWARE_VERSION],
-		       MMC_FIRMWARE_LEN);
+		for (idx = 0 ; idx < MMC_FIRMWARE_LEN ; idx++)
+			card->ext_csd.fwrev[idx] =
+				ext_csd[EXT_CSD_FIRMWARE_VERSION + MMC_FIRMWARE_LEN - 1 - idx];
 		card->ext_csd.ffu_capable =
 			(ext_csd[EXT_CSD_SUPPORTED_MODE] & 0x1) &&
 			!(ext_csd[EXT_CSD_FW_CONFIG] & 0x1);

@@ -801,6 +801,7 @@ static int m4u_debug_set(void *data, u64 val)
 		pa = m4u_mva_to_pa(NULL, 0, mva);
 		M4UMSG("(2) mva:0x%x pa:0x%lx\n", mva, pa);
 		m4u_destroy_client(client);
+		vfree(pSrc);
 	}
 	break;
 	case 25:
@@ -1017,7 +1018,8 @@ static int m4u_debug_set(void *data, u64 val)
 	case 50:
 	{
 #if (defined(CONFIG_TRUSTONIC_TEE_SUPPORT) || \
-	defined(CONFIG_MICROTRUST_TEE_SUPPORT)) && \
+	defined(CONFIG_MICROTRUST_TEE_SUPPORT) || \
+	defined(CONFIG_TEEGRIS_TEE_SUPPORT)) && \
 	defined(CONFIG_MTK_SEC_VIDEO_PATH_SUPPORT)
 		u32 sec_handle = 0;
 		u32 refcount;

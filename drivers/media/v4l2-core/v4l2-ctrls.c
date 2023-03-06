@@ -999,7 +999,7 @@ const char *v4l2_ctrl_get_name(u32 id)
 		return "P-Frame QP Value";
 	case V4L2_CID_MPEG_MTK_ENCODE_RC_B_FRAME_QP:
 		return "B-Frame QP Value";
-	case V4L2_CID_MPEG_MTK_FORCE_RES_CHANGE: return "Video Res Change";
+	case V4L2_CID_MPEG_MTK_LOG:	return "Video Log";
 	default:
 		return NULL;
 	}
@@ -1029,12 +1029,12 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_MPEG_MTK_SEC_DECODE:
 	case V4L2_CID_MPEG_MTK_SEC_ENCODE:
 	case V4L2_CID_MPEG_MTK_QUEUED_FRAMEBUF_COUNT:
-	case V4L2_CID_MPEG_MTK_FORCE_RES_CHANGE:
 		*type = V4L2_CTRL_TYPE_INTEGER;
 		*flags |= V4L2_CTRL_FLAG_WRITE_ONLY;
 		break;
 	case V4L2_CID_MPEG_MTK_CRC_PATH:
 	case V4L2_CID_MPEG_MTK_GOLDEN_PATH:
+	case V4L2_CID_MPEG_MTK_LOG:
 		*type = V4L2_CTRL_TYPE_STRING;
 		*flags |= V4L2_CTRL_FLAG_WRITE_ONLY;
 		break;
@@ -3073,6 +3073,7 @@ s64 v4l2_ctrl_g_ctrl_int64(struct v4l2_ctrl *ctrl)
 	/* It's a driver bug if this happens. */
 	WARN_ON(ctrl->is_ptr || ctrl->type != V4L2_CTRL_TYPE_INTEGER64);
 	c.value64 = 0;
+	c.size = 0;
 	get_ctrl(ctrl, &c);
 	return c.value64;
 }

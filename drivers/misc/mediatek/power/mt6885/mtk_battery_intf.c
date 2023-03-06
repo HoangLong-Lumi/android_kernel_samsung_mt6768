@@ -21,6 +21,16 @@
 #include <custome_external_battery.h>
 #endif
 
+signed int __attribute__((weak)) battery_get_precise_soc(void)
+{
+	return 0;
+}
+
+signed int __attribute__((weak)) battery_get_precise_uisoc(void)
+{
+	return 0;
+}
+
 int __attribute__((weak)) charger_get_vbus(void)
 {
 	return 4500;

@@ -103,6 +103,7 @@ struct CRTC_MMP_Events {
 	mmp_event clk_change;
 	mmp_event layerBmpDump;
 	mmp_event layer_dump[6];
+	mmp_event lcm;
 	mmp_event cwbBmpDump;
 	mmp_event cwb_dump;
 };

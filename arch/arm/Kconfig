@@ -1664,6 +1664,16 @@ config HIGHMEM
 
 	  If unsure, say n.
 
+config LOWMEM_RESERVE_LESS
+	bool "set lowmem_reserve as half(1/64) of original(1/32)"
+	depends on HIGHMEM
+	default n
+	help
+	  NORMAL zone's lowmem reserve is calculated as
+	  (pgdat->node_zones[ZONE_HIGHMEM]->managed / sysctl_lowmem_reserve_ratio[ZONE_NORMAL])
+	  When this config is enabled, let default lowmem_reserve_ratio as 64
+	  so that we reserve less pages.
+
 config HIGHPTE
 	bool "Allocate 2nd-level pagetables from highmem" if EXPERT
 	depends on HIGHMEM
@@ -1875,6 +1885,22 @@ config BUILD_ARM_APPENDED_DTB_IMAGE_NAMES
 	help
 	  Space separated list of names of dtbs to append when
 	  building a concatenated zImage-dtb.
+
+config BUILD_ARM_DTB_OVERLAY_IMAGE
+	bool "Build a device tree overlay image"
+	depends on OF
+	help
+	  Enabling this option will casue overlay device tree
+	  to be built by default.
+	  Overlay DT contains device-specific configurations.
+	  Please be aware that bootloader supports DT merging.
+
+config BUILD_ARM_DTB_OVERLAY_IMAGE_NAMES
+	string "Default dtb overlay names"
+	depends on BUILD_ARM_DTB_OVERLAY_IMAGE
+	help
+	  Space separated list of names of dtbs to append when
+	  building a concatenated overlay image
 
 # Compressed boot loader in ROM.  Yes, we really want to ask about
 # TEXT and BSS so we preserve their values in the config files.

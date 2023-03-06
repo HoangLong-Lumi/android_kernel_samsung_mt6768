@@ -237,6 +237,8 @@ void init_crtc_mmp_event(void)
 					mmprofile_register_event(
 					g_CRTC_MMP_Events[i].layerBmpDump,
 					"layer5_dump");
+		g_CRTC_MMP_Events[i].lcm = mmprofile_register_event(
+			crtc_mmp_root, "lcm");
 		g_CRTC_MMP_Events[i].cwbBmpDump =
 					mmprofile_register_event(
 					crtc_mmp_root, "CwbBmpDump");
@@ -311,18 +313,23 @@ int mtk_drm_mmp_ovl_layer(struct mtk_plane_state *state,
 	struct drm_crtc *crtc = state->crtc;
 	int crtc_idx = drm_crtc_index(crtc);
 	struct mmp_metadata_bitmap_t bitmap;
-	struct mmp_metadata_t meta;
+	struct mmp_metadata_t meta = {.data1 = 0, .data2 = 0};
 	unsigned int fmt = pending->format;
 	int raw = 0;
 	int yuv = 0;
 
 	if (!pending->enable) {
-		DDPINFO("[MMP]layer is not disable\n");
+		DDPINFO("[MMP]layer is disabled\n");
 		return -1;
 	}
 
 	if (pending->prop_val[PLANE_PROP_COMPRESS]) {
 		DDPINFO("[MMP]layer is compress\n");
+		return -1;
+	}
+
+	if (!pending->addr) {
+		DDPINFO("[MMP] invalid iova:0x%lx\n", pending->addr);
 		return -1;
 	}
 
@@ -397,6 +404,10 @@ int mtk_drm_mmp_ovl_layer(struct mtk_plane_state *state,
 			DDPINFO("%s,fail to dump rgb\n", __func__);
 			goto end;
 		}
+		if (!bitmap.p_data) {
+			DDPINFO("%s,fail to dump rgb\n", __func__);
+			goto end;
+		}
 
 		event_base = g_CRTC_MMP_Events[crtc_idx].layer_dump;
 		if (event_base) {
@@ -421,6 +432,10 @@ int mtk_drm_mmp_ovl_layer(struct mtk_plane_state *state,
 		if (crtc_mva_map_kernel(pending->addr, bitmap.data_size,
 					(unsigned long *)&meta.p_data,
 					&meta.size) != 0) {
+			DDPINFO("%s,fail to dump rgb\n", __func__);
+			goto end;
+		}
+		if (!meta.p_data) {
 			DDPINFO("%s,fail to dump rgb\n", __func__);
 			goto end;
 		}
@@ -475,7 +490,8 @@ int mtk_drm_mmp_cwb_buffer(struct drm_crtc *crtc,
 		bitmap.p_data = (void *)tmp->data.image;
 	}
 
-	event_base = g_CRTC_MMP_Events[crtc_idx].cwb_dump;
+	if (crtc_idx >= 0 && crtc_idx < MMP_CRTC_NUM)
+		event_base = g_CRTC_MMP_Events[crtc_idx].cwb_dump;
 	if (event_base)
 		mmprofile_log_meta_bitmap(
 			event_base,

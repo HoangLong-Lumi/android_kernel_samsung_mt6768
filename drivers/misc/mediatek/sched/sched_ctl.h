@@ -39,6 +39,7 @@ extern int schedtune_task_boost(struct task_struct *tsk);
 extern unsigned int hmp_cpu_is_slowest(int cpu);
 extern unsigned int hmp_cpu_is_fastest(int cpu);
 extern bool is_intra_domain(int prev, int target);
+extern int set_sched_boost(unsigned int val);
 extern unsigned long capacity_spare_without(int cpu, struct task_struct *p);
 #ifdef CONFIG_MACH_MT6873
 extern unsigned long cpu_util_without(int cpu, struct task_struct *p);

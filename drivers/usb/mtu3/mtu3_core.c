@@ -23,11 +23,62 @@
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
+#include <linux/usb_notify.h>
 
 #include "mtu3.h"
 #include "mtu3_dr.h"
 #ifdef CONFIG_USB_MTU3_PLAT_PHONE
 static u32 sts_ltssm;
+#endif
+
+#if IS_ENABLED(CONFIG_USB_NOTIFY_LAYER)
+#include <linux/usb_notify.h>
+#endif
+
+#if defined(CONFIG_BATTERY_SAMSUNG)
+static int mtu3_set_vbus_current(int state)
+{
+	struct power_supply *psy;
+	union power_supply_propval pval = {0};
+
+	pr_info("%s : %dmA\n", __func__, state);
+	psy = power_supply_get_by_name("battery");
+	if (psy) {
+		pval.intval = state;
+		psy_do_property("battery", set,
+			POWER_SUPPLY_EXT_PROP_USB_CONFIGURE, pval);
+		power_supply_put(psy);
+	}
+
+	return 0;
+}
+
+static void musb_set_vbus_current_work(struct work_struct *w)
+{
+	struct mtu3 *mtu = container_of(w,
+		struct mtu3, set_vbus_current_work);
+	struct otg_notify *o_notify = get_otg_notify();
+
+	switch (mtu->vbus_current) {
+	case USB_CURRENT_SUSPENDED:
+		/* set vbus current for suspend state is called in usb_notify. */
+		send_otg_notify(o_notify, NOTIFY_EVENT_USBD_SUSPENDED, 1);
+		goto skip;
+	case USB_CURRENT_UNCONFIGURED:
+		send_otg_notify(o_notify, NOTIFY_EVENT_USBD_UNCONFIGURED, 1);
+		break;
+	case USB_CURRENT_HIGH_SPEED:
+	case USB_CURRENT_SUPER_SPEED:
+		send_otg_notify(o_notify, NOTIFY_EVENT_USBD_CONFIGURED, 1);
+		break;
+	default:
+		break;
+	}
+
+	mtu3_set_vbus_current(mtu->vbus_current);
+skip:
+	return;
+}
 #endif
 
 static int ep_fifo_alloc(struct mtu3_ep *mep, u32 seg_size)
@@ -81,9 +132,19 @@ static void ep_fifo_free(struct mtu3_ep *mep)
 static inline void mtu3_ss_func_set(struct mtu3 *mtu, bool enable)
 {
 	/* If usb3_en==0, LTSSM will go to SS.Disable state */
-	if (enable)
+	if (enable) {
+#ifdef CONFIG_FPGA_EARLY_PORTING
+		/*
+		 * A60931 new DTB has true type-C connector.
+		 * Phy sends vbus_present and starts to swap lane.
+		 * It will take about 120ms to swap lane if needed.
+		 * Device shall wait lane swap and then enable U3 terminator.
+		 */
+		if (mtu->ssusb->fpga_phy_ver == A60931)
+			mdelay(180);
+#endif
 		mtu3_setbits(mtu->mac_base, U3D_USB3_CONFIG, USB3_EN);
-	else
+	} else
 		mtu3_clrbits(mtu->mac_base, U3D_USB3_CONFIG, USB3_EN);
 
 	dev_dbg(mtu->dev, "USB3_EN = %d\n", !!enable);
@@ -184,7 +245,7 @@ static void mtu3_intr_enable(struct mtu3 *mtu)
 	mtu3_writel(mbase, U3D_LV1IESR, value);
 
 	/* Enable U2 common USB interrupts */
-	value = SUSPEND_INTR | RESUME_INTR | RESET_INTR;
+	value = SUSPEND_INTR | RESUME_INTR | RESET_INTR | LPM_RESUME_INTR | LPM_INTR;
 	mtu3_writel(mbase, U3D_COMMON_USB_INTR_ENABLE, value);
 
 	if (mtu->is_u3_ip) {
@@ -235,9 +296,11 @@ void mtu3_ep_stall_set(struct mtu3_ep *mep, bool set)
 	}
 
 	if (!set) {
+		mtu3_qmu_stop(mep);
 		mtu3_setbits(mbase, U3D_EP_RST, EP_RST(mep->is_in, epnum));
 		mtu3_clrbits(mbase, U3D_EP_RST, EP_RST(mep->is_in, epnum));
 		mep->flags &= ~MTU3_EP_STALL;
+		mtu3_qmu_resume(mep);
 	} else {
 		mep->flags |= MTU3_EP_STALL;
 	}
@@ -357,6 +420,12 @@ int mtu3_config_ep(struct mtu3 *mtu, struct mtu3_ep *mep,
 			mtu3_readl(mbase, MU3D_EP_RXCR2(epnum)));
 	}
 
+	/* L1 Exit Check Enable except ISOC OUT EP*/
+	if (!((mep->type == USB_ENDPOINT_XFER_ISOC) && !(mep->is_in)))
+		mtu3_setbits(mbase, U3D_USB2_EPCTL_LPM, L1_EXIT_EP_CHK(mep->is_in, epnum));
+
+	/* Tx/Rx Initiate L1 exit if flow control is occurred before entering L1 */
+	mtu3_setbits(mbase, U3D_USB2_EPCTL_LPM_FC_CHK, L1_EXIT_EP_FC_CHK(mep->is_in, epnum));
 	dev_dbg(mtu->dev, "csr0:%#x, csr1:%#x, csr2:%#x\n", csr0, csr1, csr2);
 	dev_dbg(mtu->dev, "%s: %s, fifo-addr:%#x, fifo-size:%#x(%#x/%#x)\n",
 		__func__, mep->name, mep->fifo_addr, mep->fifo_size,
@@ -541,6 +610,8 @@ static void mtu3_regs_init(struct mtu3 *mtu)
 	mtu3_intr_disable(mtu);
 	mtu3_intr_status_clear(mtu);
 
+	mtu3_setbits(mbase, U3D_POWER_MANAGEMENT, LPM_HRWE);
+
 	if (mtu->is_u3_ip) {
 		/* disable LGO_U1/U2 by default */
 		mtu3_clrbits(mbase, U3D_LINK_POWER_CONTROL,
@@ -567,6 +638,11 @@ static void mtu3_regs_init(struct mtu3 *mtu)
 		mtu3_setbits(mbase, U3D_MISC_CTRL, VBUS_FRC_EN | VBUS_ON);
 	else
 		mtu3_clrbits(mbase, U3D_MISC_CTRL, VBUS_FRC_EN | VBUS_ON);
+
+	/* lpm entry and exit by HW */
+	mtu3_setbits(mbase, U3D_POWER_MANAGEMENT, LPM_HRWE);
+	mtu3_writel(mbase, U3D_USB2_EPCTL_LPM, L1_EXIT_EP0_CHK);
+	mtu3_writel(mbase, U3D_USB2_EPCTL_LPM_FC_CHK, L1_EXIT_EP0_FC_CHK);
 }
 
 static irqreturn_t mtu3_link_isr(struct mtu3 *mtu)
@@ -617,6 +693,9 @@ static irqreturn_t mtu3_link_isr(struct mtu3 *mtu)
 	mtu->g.speed = udev_speed;
 	mtu->g.ep0->maxpacket = maxpkt;
 	mtu->ep0_state = MU3D_EP0_STATE_SETUP;
+
+	if (udev_speed >= MTU3_SPEED_SUPER)
+		ssusb_phy_dp_pullup(mtu->ssusb);
 
 	if (udev_speed == USB_SPEED_UNKNOWN) {
 		mtu3_gadget_disconnect(mtu);
@@ -918,8 +997,20 @@ void mtu3_start(struct mtu3 *mtu)
 	mtu3_intr_enable(mtu);
 	mtu->is_active = 1;
 
+#if defined(CONFIG_USB_NOTIFY_PROC_LOG)
+	if (mtu->softconnect) {
+		mtu3_dev_on_off(mtu, 1);
+		store_usblog_notify(NOTIFY_USBSTATE,
+			(void *)"USB_STATE=VBUS:EN:SUCCESS", NULL);
+	} else if (!mtu->usb_rdy)
+		ssusb_phy_dp_pullup(mtu->ssusb);
+#else
 	if (mtu->softconnect)
 		mtu3_dev_on_off(mtu, 1);
+	else if (!mtu->usb_rdy)
+		ssusb_phy_dp_pullup(mtu->ssusb);
+#endif
+
 }
 
 void mtu3_stop(struct mtu3 *mtu)
@@ -929,14 +1020,25 @@ void mtu3_stop(struct mtu3 *mtu)
 	mtu3_intr_disable(mtu);
 	mtu3_intr_status_clear(mtu);
 
+#if defined(CONFIG_USB_NOTIFY_PROC_LOG)
+	if (mtu->softconnect) {
+		mtu3_dev_on_off(mtu, 0);
+		store_usblog_notify(NOTIFY_USBSTATE,
+			(void *)"USB_STATE=VBUS:DIS:SUCCESS", NULL);
+	} else
+		store_usblog_notify(NOTIFY_USBSTATE,
+			(void *)"USB_STATE=VBUS:DIS:FAIL", NULL);
+#else
 	if (mtu->softconnect)
 		mtu3_dev_on_off(mtu, 0);
+#endif
 
 	mtu->is_active = 0;
 	mtu3_setbits(mtu->ippc_base, U3D_SSUSB_IP_PW_CTRL2, SSUSB_IP_DEV_PDN);
 	#ifdef CONFIG_USB_MTU3_PLAT_PHONE
 	cancel_delayed_work_sync(&mtu->check_ltssm_work);
 	#endif
+	pr_info("usb: %s call\n", __func__);
 
 }
 
@@ -980,6 +1082,10 @@ int ssusb_gadget_init(struct ssusb_mtk *ssusb)
 
 	INIT_DELAYED_WORK(&mtu->check_ltssm_work, mtu3_check_ltssm_work);
 	#endif
+
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	INIT_WORK(&mtu->set_vbus_current_work, musb_set_vbus_current_work);
+#endif
 
 	/* check the max_speed parameter */
 	switch (mtu->max_speed) {

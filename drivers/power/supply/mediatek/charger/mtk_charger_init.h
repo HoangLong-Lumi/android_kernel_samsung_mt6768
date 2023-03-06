@@ -15,6 +15,7 @@
 #define __MTK_CHARGER_INIT_H__
 
 #define BATTERY_CV 4350000
+#define CV_HIGH_THRESHOLD 4500000
 #define V_CHARGER_MAX 6500000 /* 6.5 V */
 #define V_CHARGER_MIN 4600000 /* 4.6 V */
 

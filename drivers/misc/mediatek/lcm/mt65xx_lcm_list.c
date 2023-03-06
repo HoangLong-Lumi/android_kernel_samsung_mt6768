@@ -28,6 +28,10 @@ enum LCM_DSI_MODE_CON lcm_dsi_mode;
 #define LCD_HW_ID_STATUS_ERROR  0x03
 
 struct LCM_DRIVER *lcm_driver_list[] = {
+#if defined(CONFIG_SMCDSD_PANEL)
+	&smcdsd_panel_drv,
+#endif
+
 #if defined(ES6311_ANX6585_ZIGZAG_WXGA)
 	&es6311_anx6585_zigzag_wxga_lcm_drv,
 #endif
@@ -806,6 +810,10 @@ struct LCM_DRIVER *lcm_driver_list[] = {
 	&it6121_g156xw01v1_lvds_vdo_lcm_drv,
 #endif
 
+#if defined(EA8076G_FHDPLUS_DIS_CMD)
+	&ea8076g_fhdplus_dis_cmd_lcm_drv,
+#endif
+
 #if defined(ILI9806C_DSI_VDO_DJN_FWVGA)
 	&ili9806c_dsi_vdo_djn_fwvga_lcm_drv,
 #endif
@@ -1257,6 +1265,10 @@ struct LCM_DRIVER *lcm_driver_list[] = {
 	&nt36672c_fhdp_dsi_vdo_auo_cphy_90hz_lcm_drv,
 #endif
 
+#if defined(NT36672C_FHDP_DSI_VDO_60HZ_WO_DSC_SHENCHAO)
+	&nt36672c_fhdp_dsi_vdo_60hz_wo_dsc_shenchao_lcm_drv,
+#endif
+
 #if defined(OTM1287_WXGA_DSI_VDO_AUO_GUOXIAN)
 	&otm1287_wxga_dsi_vdo_auo_guoxian_lcm_drv,
 #endif
@@ -1293,8 +1305,49 @@ struct LCM_DRIVER *lcm_driver_list[] = {
 	&ft8201_wuxga_dsi_vdo_boe_lcm_drv,
 #endif
 
+#if defined(S6E3FC3_FHDP_CMD)
+	&s6e3fc3_fhdp_cmd_lcm_drv,
+#endif
+
+#if defined(NT36525B_HDP_DSI_VDO_LM36274)
+	&nt36525b_hdp_dsi_vdo_lm36274_lcm_drv,
+#endif
+
 #if defined(FT8756_FHDP_DSI_VDO_AUO_RT4801)
 	&ft8756_fhdp_dsi_vdo_auo_rt4801_lcm_drv,
+#endif
+
+
+#if defined(HX83102P_WUXGA2000_DSI_VDO_BOE)
+	&hx83102p_wuxga2000_dsi_vdo_boe_lcm_drv,
+#endif
+
+#if defined(NT36672C_FHDP_DSI_VDO_60HZ_SHENCHAO)
+	&nt36672c_fhdp_dsi_vdo_60hz_shenchao_lcm_drv,
+#endif
+
+#if defined(NT36672C_FHDP_DSI_VDO_90HZ_SHENCHAO)
+	&nt36672c_fhdp_dsi_vdo_90hz_shenchao_lcm_drv,
+#endif
+
+#if defined(NT36672C_FHDP_DSI_VDO_90HZ_SHENCHAO_6382)
+	&nt36672c_fhdp_dsi_vdo_90hz_shenchao_6382_lcm_drv,
+#endif
+
+#if defined(NT36672C_FHDP_DSI_VDO_120HZ_SHENCHAO_6382)
+	&nt36672c_fhdp_dsi_vdo_120hz_shenchao_6382_lcm_drv,
+#endif
+
+#if defined(R66451_FHDP_DSI_CMD_TIANMA)
+	&r66451_fhdp_dsi_cmd_tianma_lcm_drv,
+#endif
+
+#if defined(S6E3FC3_FHDP_CMD_A22_LTE)
+	&s6e3fc3_fhdp_cmd_a22_lte_lcm_drv,
+#endif
+
+#if defined(S6E3FC3_HDP_CMD_A22_LTE)
+	&s6e3fc3_hdp_cmd_a22_lte_lcm_drv,
 #endif
 };
 

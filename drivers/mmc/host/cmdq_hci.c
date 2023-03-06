@@ -170,6 +170,10 @@ void cmdq_dumpregs(struct cmdq_host *cq_host)
 	       cmdq_readl(cq_host, CQ_VENDOR_CFG));
 	pr_notice(DRV_NAME ": ===========================================\n");
 
+#if defined(CONFIG_MMC_TEST_MODE)
+	/* do not recover system if test mode is enabled */
+	BUG();
+#endif
 }
 
 /**
@@ -332,12 +336,20 @@ static int cmdq_enable(struct mmc_host *mmc)
 	cmdq_writel(cq_host, cmdq_readl(cq_host, CQSSC1) | SEND_QSR_INTERVAL,
 				CQSSC1);
 
+	/* disable write protection violation indication */
+	cmdq_writel(cq_host,
+				cmdq_readl(cq_host, CQRMEM) & ~(WP_VIOLATION | WP_ERASE_SKIP),
+				CQRMEM);
+
 	/* ensure the writes are done before enabling CQE */
 	mb();
 
 	cq_host->enabled = true;
 	mmc_host_clr_cq_disable(mmc);
 out:
+	if (err)
+		mmc_cmdq_error_logging(mmc->card, NULL, CQ_EN_DIS_ERR);
+
 	return err;
 }
 
@@ -736,8 +748,9 @@ static void cmdq_finish_data(struct mmc_host *mmc, unsigned int tag)
 
 irqreturn_t cmdq_irq(struct mmc_host *mmc, int err)
 {
-	u32 status = 0;
-	unsigned long tag = 0, comp_status = 0, cmd_idx = 0;
+	u32 status = 0, task_mask = 0;
+	unsigned long comp_status = 0, cmd_idx = 0;
+	unsigned int tag = 0;
 	struct cmdq_host *cq_host = (struct cmdq_host *)mmc_cmdq_private(mmc);
 	unsigned long err_info = 0;
 	struct mmc_request *mrq = NULL;
@@ -766,9 +779,11 @@ _err:
 		 * handling all the errors.
 		 */
 		ret = cmdq_halt_poll(mmc, true);
-		if (ret)
+		if (ret) {
 			pr_notice("%s: %s: halt failed ret = %d\n",
 					mmc_hostname(mmc), __func__, ret);
+			mmc_cmdq_error_logging(mmc->card, NULL, HALT_UNHALT_ERR);
+		}
 
 		/*
 		 * Clear the CQIS after halting incase of error. This is done
@@ -790,7 +805,6 @@ _err:
 		if (err_info & CQ_RMEFV) {
 			cmd_idx = GET_CMD_ERR_CMDIDX(err_info);
 			if (cmd_idx == MMC_SEND_STATUS) {
-				u32 task_mask;
 				/*
 				 * since CMD13 does not belong to
 				 * any tag, just find an active
@@ -800,12 +814,15 @@ _err:
 				task_mask = cmdq_readl(cq_host, CQTCN);
 				if (!task_mask)
 					task_mask = cmdq_readl(cq_host, CQTDBR);
-				tag = uffs(task_mask) - 1;
-				pr_notice("%s: cmd%lu err tag: %lu\n",
+				if (task_mask == 0)
+					tag = 0;
+				else
+					tag = uffs(task_mask) - 1;
+				pr_notice("%s: cmd%lu err tag: %u\n",
 					__func__, cmd_idx, tag);
 			} else {
 				tag = GET_CMD_ERR_TAG(err_info);
-				pr_notice("%s: cmd err tag: %lu\n",
+				pr_notice("%s: cmd err tag: %u\n",
 					__func__, tag);
 			}
 			mrq = get_req_by_tag(cq_host, tag);
@@ -816,10 +833,37 @@ _err:
 				mrq->data->error = err;
 		} else if (err_info & CQ_DTEFV) {
 			tag = GET_DAT_ERR_TAG(err_info);
-			pr_notice("%s: dat err  tag: %lu\n", __func__, tag);
+			pr_notice("%s: dat err  tag: %u\n", __func__, tag);
 
 			mrq = get_req_by_tag(cq_host, tag);
 			mrq->data->error = err;
+		} else {
+			/*
+			 * It may so happen sometimes for few errors(like QSR)
+			 * Thus below is a HW WA for recovering from such
+			 * scenario.
+			 * - To halt/disable CQE and do reset_all.
+			 *   Since there is no way to know which tag would
+			 *   have caused such error, so check for any first
+			 *   bit set in doorbell and proceed with an error.
+			 */
+			task_mask = cmdq_readl(cq_host, CQTDBR);
+			if (!task_mask) {
+				pr_notice("%s: spurious/force error interrupt\n",
+						mmc_hostname(mmc));
+				cmdq_halt_poll(mmc, false);
+				mmc_host_clr_halt(mmc);
+				return IRQ_HANDLED;
+			}
+
+			tag = uffs(task_mask) - 1;
+			pr_notice("%s: error tag selected: tag = %u\n",
+					mmc_hostname(mmc), tag);
+			mrq = get_req_by_tag(cq_host, tag);
+			if (mrq->data)
+				mrq->data->error = err;
+			else
+				mrq->cmd->error = err;
 		}
 
 		/*
@@ -1001,6 +1045,9 @@ static int cmdq_halt(struct mmc_host *mmc, bool halt)
 		if (cq_host->ops->pre_cqe_enable)
 			cq_host->ops->pre_cqe_enable(mmc, true);
 	}
+
+	if (ret)
+		mmc_cmdq_error_logging(mmc->card, NULL, HALT_UNHALT_ERR);
 
 	return ret;
 }

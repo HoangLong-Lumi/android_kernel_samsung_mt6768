@@ -38,12 +38,16 @@ enum ion_heap_type {
 	ION_HEAP_TYPE_CARVEOUT,
 	ION_HEAP_TYPE_CHUNK,
 	ION_HEAP_TYPE_DMA,
+	ION_HEAP_TYPE_CUSTOM2,
 	ION_HEAP_TYPE_CUSTOM, /*
 			       * must be last so device specific heaps always
 			       * are at the end of this enum
 			       */
 };
 
+/* Samsung specific ION heap types */
+#define ION_HEAP_TYPE_RBIN		ION_HEAP_TYPE_CUSTOM2
+#define ION_HEAP_RBIN_MASK		BIT(ION_HEAP_TYPE_RBIN)
 #define ION_NUM_HEAP_IDS		(sizeof(unsigned int) * 8)
 
 /**

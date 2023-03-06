@@ -12,17 +12,25 @@ ccflags-y += -I$(srctree)/drivers/scsi/ufs
 ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/ComboA
 ifeq ($(CONFIG_MTK_PLATFORM), "mt6761")
 ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/ComboA/mt6765
-else ifeq ($(CONFIG_MTK_PLATFORM), "mt6893")
-ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/ComboA/mt6885
 else
 ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/ComboA/$(MTK_PLATFORM)
 endif
-
 ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/$(MTK_PLATFORM)
 ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/$(MTK_PLATFORM)/$(MTK_PLATFORM)
 
 ifeq ($(CONFIG_TRUSTONIC_TEE_SUPPORT),y)
 include $(srctree)/drivers/misc/mediatek/gud/Makefile.include
+ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/rpmb/drrpmb/public
+ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/rpmb/drrpmb_gp/public
+ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/rpmb/tlrpmb/public
+endif
+
+ifeq ($(CONFIG_TEEGRIS_TEE_SUPPORT),y)
+ifeq ($(CONFIG_MTK_PLATFORM), "mt6739")
+ccflags-y += -DNO_MTK_SVP_RELEASE
+endif
+ccflags-y += -I$(srctree)/drivers/misc/tzdev/$(CONFIG_TEEGRIS_VERSION_STRING)
+include $(srctree)/drivers/misc/tzdev/Makefile.include
 ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/rpmb/drrpmb/public
 ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/rpmb/drrpmb_gp/public
 ccflags-y += -I$(srctree)/drivers/mmc/host/mediatek/rpmb/tlrpmb/public

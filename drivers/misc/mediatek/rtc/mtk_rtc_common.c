@@ -98,6 +98,8 @@
 #define AUTOBOOT_ON 0
 #define AUTOBOOT_OFF 1
 
+#define RTC_POFF_ALM_SET	_IOW('p', 0x15, struct rtc_time) /* Set alarm time  */
+
 /*
  * RTC_PDN1:
  *     bit 0 - 3  : Android bits
@@ -822,30 +824,53 @@ static int rtc_ops_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
 	return 0;
 }
 
+int mtk_set_power_on(struct device *dev, struct rtc_wkalrm *alm)
+{
+	int err = 0;
+	struct rtc_time tm;
+	time64_t now, scheduled;
+
+	err = rtc_valid_tm(&alm->time);
+	if (err != 0)
+		return err;
+	scheduled = rtc_tm_to_time64(&alm->time);
+
+	err = rtc_ops_read_time(dev, &tm);
+	if (err != 0)
+		return err;
+	now = rtc_tm_to_time64(&tm);
+
+	if (scheduled <= now)
+		alm->enabled = 4;
+	else
+		alm->enabled = 3;
+
+	rtc_ops_set_alarm(dev, alm);
+
+	return err;
+}
+
 static int rtc_ops_ioctl(struct device *dev, unsigned int cmd,
 			 unsigned long arg)
 {
-	/* dump_stack(); */
+	void __user *uarg = (void __user *) arg;
+	int err = 0;
+	struct rtc_wkalrm alm;
+
 	rtc_xinfo("%s cmd=%d\n", __func__, cmd);
-#if 0
+
 	switch (cmd) {
-	case RTC_AUTOBOOT_ON:
-		{
-			hal_rtc_set_spare_register(RTC_AUTOBOOT, AUTOBOOT_ON);
-			rtc_xinfo("%s cmd=RTC_AUTOBOOT_ON\n", __func__);
-			return 0;
-		}
-	case RTC_AUTOBOOT_OFF:	/* IPO shutdown */
-		{
-			hal_rtc_set_spare_register(RTC_AUTOBOOT, AUTOBOOT_OFF);
-			rtc_xinfo("%s cmd=RTC_AUTOBOOT_OFF\n", __func__);
-			return 0;
-		}
+	case RTC_POFF_ALM_SET:
+		if (copy_from_user(&alm.time, uarg, sizeof(alm.time)))
+			return -EFAULT;
+		err = mtk_set_power_on(dev, &alm);
+		break;
 	default:
+		err = -EINVAL;
 		break;
 	}
-#endif
-	return -ENOIOCTLCMD;
+
+	return err;
 }
 
 static const struct rtc_class_ops rtc_ops = {
@@ -856,10 +881,33 @@ static const struct rtc_class_ops rtc_ops = {
 	.ioctl = rtc_ops_ioctl,
 };
 
+#ifdef CONFIG_SEC_PM
+static int poff_status;
+static ssize_t rtc_status_show(struct kobject *kobj,
+				  struct kobj_attribute *attr, char *buf)
+{
+	int status = poff_status;
+
+	pr_info("complete power off status(%d)\n", status);
+	poff_status = 0;
+	return sprintf(buf, "%d\n", status);
+}
+
+static struct kobj_attribute rtc_status_attr = {
+	.attr = {
+		.name = __stringify(rtc_status),
+		.mode = 0444,
+	},
+	.show = rtc_status_show,
+};
+#endif
+
 static int rtc_pdrv_probe(struct platform_device *pdev)
 {
 	unsigned long flags;
-
+#ifdef CONFIG_SEC_PM
+	int ret;
+#endif
 	/* only enable LPD interrupt in engineering build */
 	spin_lock_irqsave(&rtc_lock, flags);
 	hal_rtc_set_lp_irq();
@@ -878,6 +926,17 @@ static int rtc_pdrv_probe(struct platform_device *pdev)
 	pmic_register_interrupt_callback(INT_RTC, rtc_irq_handler);
 	pmic_enable_interrupt(INT_RTC, 1, "RTC");
 
+#ifdef CONFIG_SEC_PM
+	spin_lock_irqsave(&rtc_lock, flags);
+	poff_status = hal_rtc_reset_check();
+	spin_unlock_irqrestore(&rtc_lock, flags);
+	if (power_kobj) {
+		ret = sysfs_create_file(power_kobj, &rtc_status_attr.attr);
+		if (ret)
+			pr_err("%s: failed %d\n", __func__, ret);
+	}
+#endif
+	
 	return 0;
 }
 

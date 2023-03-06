@@ -51,6 +51,9 @@
 #include <asm/virt.h>
 #include <asm/mach/arch.h>
 #include <asm/mpu.h>
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ipi.h>
@@ -286,15 +289,13 @@ int __cpu_disable(void)
 	return 0;
 }
 
-static DECLARE_COMPLETION(cpu_died);
-
 /*
  * called on the thread which is asking for a CPU to be shutdown -
  * waits until shutdown has completed, or it is timed out.
  */
 void __cpu_die(unsigned int cpu)
 {
-	if (!wait_for_completion_timeout(&cpu_died, msecs_to_jiffies(5000))) {
+	if (!cpu_wait_death(cpu, 5)) {
 		pr_err("CPU%u: cpu didn't die\n", cpu);
 		return;
 	}
@@ -340,7 +341,7 @@ void arch_cpu_idle_dead(void)
 	 * this returns, power and/or clocks can be removed at any point
 	 * from this CPU and its cache by platform_cpu_kill().
 	 */
-	complete(&cpu_died);
+	(void)cpu_report_death();
 
 	/*
 	 * Ensure that the cache lines associated with that completion are
@@ -603,7 +604,11 @@ static DEFINE_RAW_SPINLOCK(stop_lock);
 /*
  * ipi_cpu_stop - handle IPI from smp_send_stop()
  */
+ #ifdef CONFIG_SEC_DEBUG
+static void ipi_cpu_stop(unsigned int cpu, struct pt_regs *regs)
+#else
 static void ipi_cpu_stop(unsigned int cpu)
+#endif
 {
 	if (system_state <= SYSTEM_RUNNING) {
 		raw_spin_lock(&stop_lock);
@@ -616,6 +621,10 @@ static void ipi_cpu_stop(unsigned int cpu)
 
 	local_fiq_disable();
 	local_irq_disable();
+
+#ifdef CONFIG_SEC_DEBUG
+	sec_save_context(_THIS_CPU, regs);
+#endif
 
 	while (1) {
 		cpu_relax();
@@ -681,7 +690,11 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 
 	case IPI_CPU_STOP:
 		irq_enter();
+#ifdef CONFIG_SEC_DEBUG
+		ipi_cpu_stop(cpu, regs);
+#else
 		ipi_cpu_stop(cpu);
+#endif
 		irq_exit();
 		break;
 

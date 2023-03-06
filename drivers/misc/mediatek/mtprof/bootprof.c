@@ -23,6 +23,10 @@
 #include <linux/slab.h>
 #include <log_store_kernel.h>
 
+#ifdef CONFIG_SEC_BOOTSTAT
+#include <linux/sec_ext.h>
+#endif
+
 #include "internal.h"
 #include "mtk_sched_mon.h"
 
@@ -130,6 +134,10 @@ static void bootprof_bootloader(void)
 
 		pr_info("BOOTPROF: DT(Err:0x%x) pl_t=%d, lk_t=%d, lk_logo_t=%d\n",
 			err, bootprof_pl_t, bootprof_lk_t, bootprof_logo_t);
+
+#ifdef CONFIG_SEC_BOOTSTAT
+		sec_boot_stat_set_bl_boot_time(bootprof_pl_t, bootprof_lk_t);
+#endif		
 	}
 }
 
@@ -267,7 +275,7 @@ mt_bootprof_write(struct file *filp, const char *ubuf, size_t cnt, loff_t *data)
 
 static int mt_bootprof_show(struct seq_file *m, void *v)
 {
-	int i;
+	unsigned int i;
 	struct log_t *p;
 
 	if (!m) {

@@ -36,6 +36,9 @@
 #endif
 
 struct ion_buffer *ion_handle_buffer(struct ion_handle *handle);
+#ifdef CONFIG_ION_RBIN_HEAP
+extern struct ion_heap *ion_rbin_heap_create(struct ion_platform_heap *pheap);
+#endif
 
 /**
  * struct ion_buffer - metadata for a particular buffer
@@ -485,6 +488,7 @@ struct ion_page_pool {
 
 struct ion_page_pool *ion_page_pool_create(gfp_t gfp_mask, unsigned int order,
 					   bool cached);
+struct page *ion_page_pool_only_alloc(struct ion_page_pool *pool);
 void ion_page_pool_destroy(struct ion_page_pool *pool);
 struct page *ion_page_pool_alloc(struct ion_page_pool *pool);
 void ion_page_pool_free(struct ion_page_pool *pool, struct page *page);
@@ -543,5 +547,9 @@ int ion_share_dma_buf_fd_nolock(struct ion_client *client,
 
 struct ion_handle *pass_to_user(struct ion_handle *handle);
 void user_ion_free_nolock(struct ion_client *client, struct ion_handle *handle);
+
+struct ion_handle *__ion_alloc(struct ion_client *client, size_t len,
+			       size_t align, unsigned int heap_id_mask,
+			       unsigned int flags, bool grab_handle);
 
 #endif /* _ION_PRIV_H */

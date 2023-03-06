@@ -14,6 +14,9 @@
 #include <linux/regulator/mt6315-misc.h>
 #include <linux/regulator/mt6315-regulator.h>
 #include <linux/regulator/of_regulator.h>
+#ifdef CONFIG_SEC_PM
+#include <linux/wakeup_reason.h>
+#endif /* CONFIG_SEC_PM */
 
 #define MT6315_REG_WIDTH		8
 
@@ -182,6 +185,9 @@ static irqreturn_t mt6315_irq_handler(int irq, void *data)
 			"Reg[0x%x]=0x%x,hwirq=%d,type=%d\n",
 			irq_data->sta_reg, int_status, hwirq,
 			irq_get_trigger_type(virq));
+#ifdef CONFIG_SEC_PM
+		log_threaded_irq_wakeup_reason(virq, chip->irq);
+#endif /* CONFIG_SEC_PM */
 		if (virq)
 			handle_nested_irq(virq);
 	}
@@ -324,6 +330,10 @@ static int mt6315_irq_init(struct mt6315_chip *chip)
 
 static const struct regulator_linear_range mt_volt_range1[] = {
 	REGULATOR_LINEAR_RANGE(300000, 0x30, 0xbf, 6250),
+};
+
+static const struct regulator_linear_range mt_volt_range2[] = {
+	REGULATOR_LINEAR_RANGE(0, 0x0, 0xbf, 6250),
 };
 
 static int mt6315_regulator_disable(struct regulator_dev *rdev)
@@ -489,12 +499,19 @@ static struct mt6315_regulator_info mt6315_6_regulators[] = {
 #if defined(CONFIG_MACH_MT6893)
 	MT_BUCK("6_vbuck1", 6_VBUCK1, 300000, 1193750, 6250,
 		mt_volt_range1, 1, MT_BUCK_VOL_EN_MODE, 0xF),
+#elif defined(CONFIG_MACH_MT6877)
+	MT_BUCK("6_vbuck1", 6_VBUCK1, 300000, 1193750, 6250,
+		mt_volt_range1, 1, MT_BUCK_VOL_EN_MODE, 0x3),
 #else
 	MT_BUCK("6_vbuck1", 6_VBUCK1, 300000, 1193750, 6250,
 		mt_volt_range1, 1, MT_BUCK_VOL_EN_MODE, 0xB),
 #endif
 	MT_BUCK("6_vbuck3", 6_VBUCK3, 300000, 1193750, 6250,
 		mt_volt_range1, 3, MT_BUCK_VOL_EN_MODE, 0x4),
+#if defined(CONFIG_MACH_MT6877)
+	MT_BUCK("6_vbuck4", 6_VBUCK4, 300000, 1193750, 6250,
+		mt_volt_range1, 4, MT_BUCK_VOL_EN_MODE, 0x8),
+#endif
 };
 
 static struct mt6315_regulator_info mt6315_7_regulators[] = {
@@ -516,8 +533,13 @@ static struct mt6315_regulator_info mt6315_7_regulators[] = {
 static struct mt6315_regulator_info mt6315_3_regulators[] = {
 	MT_BUCK("3_vbuck1", 3_VBUCK1, 300000, 1193750, 6250,
 		mt_volt_range1, 1, MT_BUCK_VOL_EN, 0x3),
+#if defined(CONFIG_MACH_MT6877)
+	MT_BUCK("3_vbuck3", 3_VBUCK3, 300000, 1193750, 6250,
+		mt_volt_range2, 3, MT_BUCK_VOL_EN, 0x4),
+#else
 	MT_BUCK("3_vbuck3", 3_VBUCK3, 300000, 1193750, 6250,
 		mt_volt_range1, 3, MT_BUCK_VOL_EN, 0x4),
+#endif
 	MT_BUCK("3_vbuck4", 3_VBUCK4, 300000, 1193750, 6250,
 		mt_volt_range1, 4, MT_BUCK_VOL_EN, 0x8),
 };

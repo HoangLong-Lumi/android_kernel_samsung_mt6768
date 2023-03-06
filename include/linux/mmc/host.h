@@ -704,6 +704,10 @@ struct mmc_host {
 		int				num_funcs;
 	} embedded_sdio_data;
 #endif
+
+	int (*sdcard_uevent)(struct mmc_card *card);
+
+	unsigned int			card_detect_cnt;
 	unsigned long		private[0] ____cacheline_aligned;
 };
 

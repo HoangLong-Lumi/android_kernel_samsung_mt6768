@@ -303,6 +303,8 @@ unsigned int mtk_mbox_check_send_irq(struct mtk_mbox_device *mbdev,
 		unsigned int mbox, unsigned int pin_index);
 int mtk_mbox_probe(struct platform_device *pdev, struct mtk_mbox_device *mbdev,
 		unsigned int mbox);
+int mtk_mbox_scp_probe(struct platform_device *pdev, struct mtk_mbox_device *mbdev,
+		unsigned int mbox);
 int mtk_mbox_cb_register(struct mtk_mbox_device *mbdev, unsigned int pin_offset,
 		mbox_pin_cb_t mbox_pin_cb, void *prdata);
 int mtk_mbox_polling(struct mtk_mbox_device *mbdev, unsigned int mbox,

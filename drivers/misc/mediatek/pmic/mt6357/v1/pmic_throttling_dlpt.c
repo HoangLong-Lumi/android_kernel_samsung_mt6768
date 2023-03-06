@@ -36,6 +36,9 @@
 #include <mtk_idle.h>
 #include <mt-plat/mtk_charger.h>
 
+#ifndef CONFIG_MTK_GAUGE_VERSION
+#define CONFIG_MTK_GAUGE_VERSION 0
+#endif
 #if (CONFIG_MTK_GAUGE_VERSION == 30)
 #include <mt-plat/mtk_battery.h>
 #include <mach/mtk_battery_property.h>
@@ -239,6 +242,11 @@ int __attribute__ ((weak)) dlpt_check_power_off(void)
  *******************************************************************/
 #define OCCB_NUM 16
 
+#if defined(CONFIG_BATTERY_SAMSUNG) || defined(CONFIG_BATTERY_SAMSUNG_V2) \
+	|| (CONFIG_MTK_GAUGE_VERSION != 30)
+#define DISABLE_BATTERY_OC_PROTECT
+#endif
+
 #ifndef DISABLE_BATTERY_OC_PROTECT
 #define BATTERY_OC_PROTECT
 #endif
@@ -264,6 +272,9 @@ int __attribute__ ((weak)) dlpt_check_power_off(void)
 #define bat_oc_h_thd(cur)   \
 (65535-(cur*fg_cust_data.r_fg_value*1000/UNIT_FGCURRENT* \
 	95*100/fg_cust_data.car_tune_value))
+#else
+
+#define bat_oc_h_thd(cur)   1
 
 #endif /* end of #if CONFIG_MTK_GAUGE_VERSION == 30 */
 
@@ -1031,7 +1042,7 @@ int get_dlpt_imix(void)
 	return imix;
 
 }
-
+#if (CONFIG_MTK_GAUGE_VERSION == 30)
 static int get_dlpt_imix_charging(void)
 {
 	int zcv_val = 0;
@@ -1062,6 +1073,7 @@ static int get_dlpt_imix_charging(void)
 /* for dlpt_notify_handler */
 static int g_low_per_timer;
 static int g_low_per_timeout_val = 60;
+#endif
 
 bool __attribute__ ((weak)) mtk_dpidle_is_active(void)
 {

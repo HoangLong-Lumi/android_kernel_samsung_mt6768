@@ -14,6 +14,10 @@
 #include <linux/export.h>
 #include <kernel/sched/sched.h>
 
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
+
 #ifdef CONFIG_MTK_AEE_FEATURE
 #include <mt-plat/aee.h>
 #endif
@@ -209,6 +213,17 @@ static void spin_dump(raw_spinlock_t *lock, const char *msg)
 
 	if (owner == SPINLOCK_OWNER_INIT)
 		owner = NULL;
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+	pr_auto(ASL8, KERN_EMERG "BUG: spinlock %s on CPU#%d, %s/%d\n",
+		msg, raw_smp_processor_id(),
+		current->comm, task_pid_nr(current));
+	pr_auto(ASL8, KERN_EMERG " lock: %pS, .magic: %08x, .owner: %s/%d, "
+			".owner_cpu: %d\n",
+		lock, READ_ONCE(lock->magic),
+		owner ? owner->comm : "<none>",
+		owner ? task_pid_nr(owner) : -1,
+		READ_ONCE(lock->owner_cpu));
+#else
 	printk(KERN_EMERG "BUG: spinlock %s on CPU#%d, %s/%d\n",
 		msg, raw_smp_processor_id(),
 		current->comm, task_pid_nr(current));
@@ -218,6 +233,7 @@ static void spin_dump(raw_spinlock_t *lock, const char *msg)
 		owner ? owner->comm : "<none>",
 		owner ? task_pid_nr(owner) : -1,
 		READ_ONCE(lock->owner_cpu));
+#endif
 	dump_stack();
 }
 
