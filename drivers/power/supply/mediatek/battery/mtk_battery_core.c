@@ -56,6 +56,9 @@
 #include <linux/math64.h>
 #include <linux/alarmtimer.h>
 
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+
 #include <mt-plat/aee.h>
 #include <mt-plat/charger_type.h>
 #include <mt-plat/mtk_charger.h>
@@ -81,6 +84,9 @@
 #include "simulator_kernel.h"
 #endif
 
+#if defined(CONFIG_SEC_FACTORY)
+#include <../drivers/battery/common/sec_charging_common.h>
+#endif
 
 
 /* ============================================================ */
@@ -606,7 +612,11 @@ void fgauge_get_profile_id(void)
 	struct device_node *batterty_node;
 	struct platform_device *battery_dev;
 
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	batterty_node = of_find_node_by_name(NULL, "mtk_battery");
+#else
 	batterty_node = of_find_node_by_name(NULL, "battery");
+#endif
 	if (!batterty_node) {
 		bm_err("[%s] of_find_node_by_name fail\n", __func__);
 		return;
@@ -662,7 +672,43 @@ void fgauge_get_profile_id(void)
 #elif defined(MTK_GET_BATTERY_ID_BY_GPIO)
 void fgauge_get_profile_id(void)
 {
-	gm.battery_id = 0;
+	struct device_node *batterty_node;
+	int _battery_id_gpio_0, _battery_id_gpio_1;
+	int _battery_id_0, _battery_id_1;
+
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	batterty_node = of_find_node_by_name(NULL, "mtk_battery");
+#else
+	batterty_node = of_find_node_by_name(NULL, "battery");
+#endif
+	if (!batterty_node) {
+		bm_err("[%s] of_find_node_by_name fail\n", __func__);
+		return;
+	}
+
+	_battery_id_gpio_1 = of_get_named_gpio(batterty_node, "BatteryID_GPIO_1", 0);
+	_battery_id_gpio_0 = of_get_named_gpio(batterty_node, "BatteryID_GPIO", 0);
+
+	/* check batteryid gpio */
+	if (_battery_id_gpio_0 < 0) {
+		gm.battery_id = 0;
+		bm_err("[%s] cannot find BatteryID-GPIO. Default battery ID = %d\n",
+			__func__, gm.battery_id);
+		return;
+	}
+
+	_battery_id_0 = gpio_get_value(_battery_id_gpio_0);
+
+	if (_battery_id_gpio_1 < 0) {
+		gm.battery_id = _battery_id_0;
+		bm_err("[%s]GPIO Battery id (%d) (battery_id_gpio= %d)\n",
+			__func__, gm.battery_id, _battery_id_gpio_0);
+	} else {
+		_battery_id_1 = gpio_get_value(_battery_id_gpio_1);
+		gm.battery_id = (_battery_id_1 << 1) + (_battery_id_0);
+		bm_err("[%s]GPIO Battery id (%d) (battery_id_gpio= %d %d)\n",
+			__func__, gm.battery_id, _battery_id_gpio_1, _battery_id_gpio_0);
+	}
 }
 #else
 void fgauge_get_profile_id(void)
@@ -812,6 +858,7 @@ void fg_custom_init_from_header(void)
 	/* ZCV update */
 	fg_cust_data.zcv_suspend_time = ZCV_SUSPEND_TIME;
 	fg_cust_data.sleep_current_avg = SLEEP_CURRENT_AVG;
+	fg_cust_data.zcv_com_vol_limit = ZCV_COM_VOL_LIMIT;
 	fg_cust_data.zcv_car_gap_percentage = ZCV_CAR_GAP_PERCENTAGE;
 
 	/* dod_init */
@@ -1438,6 +1485,8 @@ void fg_custom_init_from_dts(struct platform_device *dev)
 		&(fg_cust_data.zcv_suspend_time), 1);
 	fg_read_dts_val(np, "SLEEP_CURRENT_AVG",
 		&(fg_cust_data.sleep_current_avg), 1);
+	fg_read_dts_val(np, "ZCV_COM_VOL_LIMIT",
+		&(fg_cust_data.zcv_com_vol_limit), 1);
 	fg_read_dts_val(np, "ZCV_CAR_GAP_PERCENTAGE",
 		&(fg_cust_data.zcv_car_gap_percentage), 1);
 
@@ -1644,6 +1693,11 @@ void fg_custom_init_from_dts(struct platform_device *dev)
 
 	fg_read_dts_val(np, "ACTIVE_TABLE",
 		&(fg_table_cust_data.active_table_number), 1);
+
+	/* dynamic CV */
+	fg_read_dts_val(np, "DYNAMIC_CV_FACTOR", &(fg_cust_data.dynamic_cv_factor), 1);
+	fg_read_dts_val(np, "CHARGER_IEOC", &(fg_cust_data.charger_ieoc), 1);
+
 
 #if defined(CONFIG_MTK_ADDITIONAL_BATTERY_TABLE)
 	if (fg_table_cust_data.active_table_number == 0)
@@ -2788,6 +2842,11 @@ void fg_drv_update_hw_status(void)
 	chr_vol = battery_get_vbus();
 	tmp = force_get_tbat(true);
 
+	bm_err("precise_soc: %d.%d\n",
+		(battery_get_precise_soc()/10), (battery_get_precise_soc()%10));
+	bm_err("precise_uisoc: %d.%d\n",
+		(battery_get_precise_uisoc()/10), (battery_get_precise_uisoc()%10));
+
 	bm_err("lbat %d %d %d %d\n",
 		gm.sw_low_battery_ht_en,
 		gm.sw_low_battery_ht_threshold,
@@ -2839,9 +2898,10 @@ void fg_drv_update_hw_status(void)
 
 int battery_update_routine(void *x)
 {
+	int ret = 0;
 	battery_update_psd(&battery_main);
 	while (1) {
-		wait_event(gm.wait_que,
+		ret = wait_event_interruptible(gm.wait_que,
 			(gm.fg_update_flag > 0)
 			|| (gm.tracking_cb_flag > 0)
 			|| (gm.onepercent_cb_flag > 0));
@@ -3167,6 +3227,7 @@ void fg_daemon_comm_INT_data(char *rcv, char *ret)
 	case FG_SET_SOC:
 		{
 			gm.soc = (prcv->input + 50) / 100;
+			gm.precise_soc = (prcv->input + 5) / 10;
 		}
 		break;
 	case FG_SET_C_D0_SOC:
@@ -3255,6 +3316,14 @@ void fg_daemon_comm_INT_data(char *rcv, char *ret)
 			bm_err("set zcv_interrupt_en %d\n", zcv_intr_en);
 		}
 		break;
+	case FG_SET_DYNAMIC_CV:
+		{
+			int cv = prcv->input;
+
+			cv = cv * 100;
+			battery_set_charger_constant_voltage(cv);
+			bm_err("comm_INT:FG_SET_DYNAMIC_CV set charger cv:%d\n", cv);
+		}
 	default:
 		pret->status = -1;
 		bm_err("%s type:%d in:%d out:%d,Retun t:%d,in:%d,o:%d,s:%d\n",
@@ -3303,7 +3372,13 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 			int is_bat_exist = 0;
 
 			is_bat_exist = pmic_is_battery_exist();
-
+#if defined(CONFIG_SEC_FACTORY)
+			if (battery_main.f_mode == OB_MODE) {
+				is_bat_exist = 0;
+				bm_err("[fr] FG_DAEMON_CMD_IS_BAT_EXIST = %d\n",
+					is_bat_exist);
+			}
+#endif
 			ret_msg->fgd_data_len += sizeof(is_bat_exist);
 			memcpy(ret_msg->fgd_data,
 				&is_bat_exist, sizeof(is_bat_exist));
@@ -4314,12 +4389,14 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 		soc_type = msg->fgd_subcmd_para1;
 
 		memcpy(&daemon_soc, &msg->fgd_data[0], sizeof(daemon_soc));
-		if (soc_type == 0)
+		if (soc_type == 0) {
 			gm.soc = (daemon_soc + 50) / 100;
+			gm.precise_soc = (daemon_soc + 5) / 10;
+		}
 
 		bm_err(
-		"[fg_res]FG_DAEMON_CMD_SET_KERNEL_SOC = %d %d, type:%d\n",
-		daemon_soc, gm.soc, soc_type);
+		"[fg_res]FG_DAEMON_CMD_SET_KERNEL_SOC = %d %d %d, type:%d\n",
+		daemon_soc, gm.soc, gm.precise_soc, soc_type);
 
 	}
 	break;
@@ -4342,26 +4419,29 @@ void bmd_ctrl_cmd_from_user(void *nl_data, struct fgd_nl_msg_t *ret_msg)
 		fg_cust_data.ui_old_soc = daemon_ui_soc;
 		old_uisoc = gm.ui_soc;
 
-		if (gm.disableGM30 == true)
+		if (gm.disableGM30 == true) {
 			gm.ui_soc = 50;
-		else
+			gm.precise_ui_soc = 50 * 10;
+		} else {
 			gm.ui_soc = (daemon_ui_soc + 50) / 100;
+			gm.precise_ui_soc = (daemon_ui_soc + 5) / 10;
+		}
 
 		/* when UISOC changes, check the diff time for smooth */
 		if (old_uisoc != gm.ui_soc) {
 			get_monotonic_boottime(&now_time);
 			diff = timespec_sub(now_time, gm.uisoc_oldtime);
 
-			bm_debug("[fg_res] FG_DAEMON_CMD_SET_KERNEL_UISOC = %d %d GM3:%d old:%d diff=%ld\n",
-				daemon_ui_soc, gm.ui_soc,
+			bm_debug("[fg_res] FG_DAEMON_CMD_SET_KERNEL_UISOC = %d %d %d GM3:%d old:%d diff=%ld\n",
+				daemon_ui_soc, gm.ui_soc, gm.precise_ui_soc,
 				gm.disableGM30, old_uisoc, diff.tv_sec);
 			gm.uisoc_oldtime = now_time;
 
 			battery_main.BAT_CAPACITY = gm.ui_soc;
 			battery_update(&battery_main);
 		} else {
-			bm_debug("[fg_res] FG_DAEMON_CMD_SET_KERNEL_UISOC = %d %d GM3:%d\n",
-				daemon_ui_soc, gm.ui_soc, gm.disableGM30);
+			bm_debug("[fg_res] FG_DAEMON_CMD_SET_KERNEL_UISOC = %d %d %d GM3:%d\n",
+				daemon_ui_soc, gm.ui_soc, gm.precise_ui_soc, gm.disableGM30);
 			/* ac_update(&ac_main); */
 			battery_main.BAT_CAPACITY = gm.ui_soc;
 			battery_update(&battery_main);

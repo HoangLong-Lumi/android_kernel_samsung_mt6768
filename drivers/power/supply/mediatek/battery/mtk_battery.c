@@ -264,7 +264,6 @@ int gauge_enable_interrupt(int intr_number, int en)
 	return 0;
 }
 
-
 bool is_battery_init_done(void)
 {
 	return gm.is_probe_done;
@@ -531,7 +530,9 @@ static int battery_get_property(struct power_supply *psy,
 		}
 		break;
 
-
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
+		val->intval = gm.dynamic_cv;
+		break;
 	default:
 		ret = -EINVAL;
 		break;
@@ -540,6 +541,32 @@ static int battery_get_property(struct power_supply *psy,
 	return ret;
 }
 
+static int battery_set_property(struct power_supply *psy,
+	enum power_supply_property psp,
+	const union power_supply_propval *val)
+{
+	int ret = 0;
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
+		if (val->intval > 0) {
+			gm.dynamic_cv = val->intval / 100;
+			wakeup_fg_algo_cmd(
+				FG_INTR_KERNEL_CMD,
+				FG_KERNEL_CMD_GET_DYNAMIC_CV, gm.dynamic_cv);
+			bm_err("[%s], dynamic_cv: %d\n",  __func__, gm.dynamic_cv);
+		}
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	bm_debug("%s psp:%d ret:%d val:%d",
+		__func__, psp, ret, val->intval);
+
+	return ret;
+}
 /* battery_data initialization */
 struct battery_data battery_main = {
 	.psd = {
@@ -548,6 +575,7 @@ struct battery_data battery_main = {
 		.properties = battery_props,
 		.num_properties = ARRAY_SIZE(battery_props),
 		.get_property = battery_get_property,
+		.set_property = battery_set_property,
 		},
 
 	.BAT_STATUS = POWER_SUPPLY_STATUS_DISCHARGING,
@@ -969,6 +997,10 @@ static void proc_dump_dtsi(struct seq_file *m)
 	seq_puts(m, "SHUTDOWN_CONDITION_LOW_BAT_VOLT = 0\n");
 #endif
 	seq_printf(m, "hw_version = %d\n", gauge_get_hw_version());
+	seq_printf(m, "DYNAMIC_CV_FACTOR = %d\n",
+		fg_cust_data.dynamic_cv_factor);
+	seq_printf(m, "CHARGER_IEOC = %d\n",
+		fg_cust_data.charger_ieoc);
 
 }
 
@@ -2071,6 +2103,11 @@ int battery_get_charger_zcv(void)
 
 	charger_manager_get_zcv(gm.pbat_consumer, MAIN_CHARGER, &zcv);
 	return zcv;
+}
+
+void battery_set_charger_constant_voltage(u32 cv)
+{
+	charger_manager_set_constant_voltage(gm.pbat_consumer, MAIN_CHARGER, cv);
 }
 
 void fg_ocv_query_soc(int ocv)
@@ -3268,6 +3305,25 @@ void exec_BAT_EC(int cmd, int param)
 			dump_pseudo100(param);
 		}
 		break;
+	case 802:
+		{
+			fg_cust_data.zcv_com_vol_limit = param;
+
+			bm_err(
+				"exe_BAT_EC cmd %d,zcv_com_vol_limit =%d\n",
+				cmd, param);
+		}
+		break;
+	case 803:
+		{
+			fg_cust_data.sleep_current_avg = param;
+
+			bm_err(
+				"exe_BAT_EC cmd %d,sleep_current_avg =%d\n",
+				cmd, param);
+		}
+		break;
+
 
 	default:
 		bm_err(

@@ -125,14 +125,14 @@ static const struct mtk_spi_compatible mt2712_compat = {
 };
 
 static const struct mtk_spi_compatible mt6739_compat = {
-	.need_pad_sel = true,
+	.need_pad_sel = false,
 	.must_tx = true,
 	.enhance_timing = true,
 	.dma_ext = true,
 };
 
 static const struct mtk_spi_compatible mt6765_compat = {
-	.need_pad_sel = true,
+	.need_pad_sel = false,
 	.must_tx = true,
 	.enhance_timing = true,
 	.dma_ext = true,
@@ -378,6 +378,10 @@ static int mtk_spi_prepare_message(struct spi_master *master,
 		writel(mdata->pad_sel[spi->chip_select],
 		       mdata->base + SPI_PAD_SEL_REG);
 
+	reg_val = readl(mdata->base + SPI_CFG1_REG);
+	reg_val &= 0x1FFFFFFF;
+	reg_val |= (chip_config->tick_delay << SPI_CFG1_GET_TICK_DLY_OFFSET);
+	writel(reg_val, mdata->base + SPI_CFG1_REG);
 	return 0;
 }
 
@@ -803,6 +807,7 @@ static int mtk_spi_probe(struct platform_device *pdev)
 	const struct of_device_id *of_id;
 	struct resource *res;
 	int i, irq, ret, addr_bits, value;
+	u32 num_cs = 0;
 
 	master = spi_alloc_master(&pdev->dev, sizeof(*mdata));
 	if (!master) {
@@ -814,7 +819,6 @@ static int mtk_spi_probe(struct platform_device *pdev)
 	master->dev.of_node = pdev->dev.of_node;
 	master->mode_bits = SPI_CPOL | SPI_CPHA;
 
-	master->set_cs = mtk_spi_set_cs;
 	master->prepare_message = mtk_spi_prepare_message;
 	master->unprepare_message = mtk_spi_unprepare_message;
 	master->transfer_one = mtk_spi_transfer_one;
@@ -827,6 +831,9 @@ static int mtk_spi_probe(struct platform_device *pdev)
 		ret = -EINVAL;
 		goto err_put_master;
 	}
+
+	if (!of_property_read_u32(pdev->dev.of_node, "num-cs", &num_cs))
+		master->num_chipselect = num_cs;
 
 	mdata = spi_master_get_devdata(master);
 	mdata->dev_comp = of_id->data;
@@ -848,6 +855,10 @@ static int mtk_spi_probe(struct platform_device *pdev)
 		else
 			master->rt = false;
 	}
+
+	/* avoid access spi register when accessed only in tee in case devapc error */
+	if (!of_property_read_bool(pdev->dev.of_node, "tee-only"))
+		master->set_cs = mtk_spi_set_cs;
 
 	if (mdata->dev_comp->need_pad_sel) {
 		mdata->pad_num = of_property_count_u32_elems(
@@ -953,13 +964,6 @@ static int mtk_spi_probe(struct platform_device *pdev)
 		goto err_put_master;
 	}
 
-	ret = devm_spi_register_master(&pdev->dev, master);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to register master (%d)\n", ret);
-		clk_disable(mdata->spi_clk);
-		goto err_disable_runtime_pm;
-	}
-
 	mdata->spi_clk_hz = clk_get_rate(mdata->spi_clk);
 	clk_disable(mdata->spi_clk);
 
@@ -1007,11 +1011,17 @@ static int mtk_spi_probe(struct platform_device *pdev)
 	if (ret)
 		dev_notice(&pdev->dev, "SPI dma_set_mask(%d) failed, ret:%d\n",
 			   addr_bits, ret);
-
 	pm_qos_add_request(&mdata->spi_qos_request, PM_QOS_CPU_DMA_LATENCY,
 		PM_QOS_DEFAULT_VALUE);
 
+	ret = devm_spi_register_master(&pdev->dev, master);
+	if (ret) {
+		dev_notice(&pdev->dev, "failed to register master (%d)\n", ret);
+		goto err_disable_runtime_pm;
+	}
+	pr_info("num_chipselect=%d\n", master->num_chipselect);
 	return 0;
+
 
 err_disable_runtime_pm:
 	pm_runtime_disable(&pdev->dev);
@@ -1107,6 +1117,51 @@ static int mtk_spi_runtime_resume(struct device *dev)
 	return 0;
 }
 #endif /* CONFIG_PM */
+
+#ifdef CONFIG_SAMSUNG_TUI
+int stui_spi_lock(struct spi_master *spi)
+{
+	int ret = 0;
+	struct mtk_spi *mdata = spi_master_get_devdata(spi);
+
+	(void)mdata;
+
+	spi_bus_lock(spi);
+
+	pr_info("STUI stui_spi_lock() enter\n");
+
+#ifdef CONFIG_PM
+	ret = clk_enable(mdata->spi_clk);
+	if (ret < 0) {
+		pr_err("STUI failed to enable spi_clk (%d)\n", ret);
+		spi_bus_unlock(spi);
+		return ret;
+	}
+#endif
+	pr_info("STUI stui_spi_lock() exit\n");
+	return ret;
+}
+
+int stui_spi_unlock(struct spi_master *spi)
+{
+	int ret = 0;
+	struct mtk_spi *mdata;
+
+	(void)mdata;
+
+	pr_info("STUI stui_spi_unlock() enter\n");
+
+#ifdef CONFIG_PM
+	mdata = spi_master_get_devdata(spi);
+	clk_disable(mdata->spi_clk);
+#endif
+
+	spi_bus_unlock(spi);
+
+	pr_info("STUI stui_spi_unlock() exit\n");
+	return 0;
+}
+#endif
 
 static const struct dev_pm_ops mtk_spi_pm = {
 	SET_SYSTEM_SLEEP_PM_OPS(mtk_spi_suspend, mtk_spi_resume)

@@ -27,6 +27,9 @@
 #include "scp_excep.h"
 #include "scp_feature_define.h"
 #include "scp_l1c.h"
+#ifdef CONFIG_SHUB
+#include "../../../../sensorhub/vendor/shub_mtk_helper.h"
+#endif
 
 struct scp_dump_st {
 	uint8_t *detail_buff;
@@ -63,9 +66,10 @@ static unsigned int scp_A_task_context_addr;
 struct scp_status_reg c0_m;
 struct scp_status_reg c1_m;
 
-static struct mutex scp_excep_mutex;
 int scp_ee_enable;
 int scp_reset_counts = 100000;
+static atomic_t coredumping = ATOMIC_INIT(0);
+static DECLARE_COMPLETION(scp_coredump_comp);
 
 void scp_dump_last_regs(void)
 {
@@ -263,6 +267,27 @@ static unsigned int scp_crash_dump(struct MemoryDump *pMemoryDump,
 	return scp_dump_size;
 }
 
+#ifdef CONFIG_SHUB
+int get_scp_dump_size(void)
+{
+	unsigned int scp_dump_size;
+	uint32_t dram_size = 0;
+
+	scp_dump_size = MDUMP_L2TCM_SIZE + MDUMP_L1C_SIZE
+		+ MDUMP_REGDUMP_SIZE + MDUMP_TBUF_SIZE;
+
+	/* dram support? */
+	if ((int)(scp_region_info_copy.ap_dram_size) <= 0) {
+		pr_notice("[scp] ap_dram_size <=0\n");
+	} else {
+		dram_size = scp_region_info_copy.ap_dram_size;
+		scp_dump_size += roundup(dram_size, 4);
+	}
+
+	return scp_dump_size;
+}
+#endif
+
 /*
  * generate aee argument with scp register dump
  * @param aed_str:  exception description
@@ -319,7 +344,11 @@ void scp_aed(enum SCP_RESET_TYPE type, enum scp_core_id id)
 		return;
 	}
 
-	mutex_lock(&scp_excep_mutex);
+	/* wait for previous coredump complete */
+	wait_for_completion(&scp_coredump_comp);
+	if (atomic_read(&coredumping) == true)
+		pr_notice("[SCP] coredump overwrite happen\n");
+	atomic_set(&coredumping, true);
 
 	/* get scp title and exception type*/
 	switch (type) {
@@ -351,8 +380,16 @@ void scp_aed(enum SCP_RESET_TYPE type, enum scp_core_id id)
 	scp_get_log(id);
 	/*print scp message*/
 	pr_debug("scp_aed_title=%s\n", scp_aed_title);
+	if (scp_dump.ramdump == NULL)
+		scp_dump.ramdump = vmalloc(sizeof(struct MemoryDump));
 
-	scp_prepare_aed_dump(scp_aed_title, id);
+	if (scp_dump.ramdump != NULL) {
+		scp_prepare_aed_dump(scp_aed_title, id);
+#ifdef CONFIG_SHUB
+		shub_dump_write_file((void *)scp_dump.ramdump, scp_dump.ramdump_length);
+#endif
+	} else
+		pr_notice("[SCP] ramdump malloc fail\n");
 
 	/* scp aed api, only detail information available*/
 	aed_common_exception_api("scp", NULL, 0, NULL, 0,
@@ -360,7 +397,6 @@ void scp_aed(enum SCP_RESET_TYPE type, enum scp_core_id id)
 
 	pr_debug("[SCP] scp exception dump is done\n");
 
-	mutex_unlock(&scp_excep_mutex);
 }
 
 
@@ -371,17 +407,24 @@ static ssize_t scp_A_dump_show(struct file *filep,
 {
 	unsigned int length = 0;
 
-	mutex_lock(&scp_excep_mutex);
 
 	if (offset >= 0 && offset < scp_dump.ramdump_length) {
-		if ((offset + size) > scp_dump.ramdump_length)
+		if ((offset + size) >= scp_dump.ramdump_length)
 			size = scp_dump.ramdump_length - offset;
 
 		memcpy(buf, scp_dump.ramdump + offset, size);
 		length = size;
+		/* the last time read scp_dump buffer has done
+		 * so the next coredump flow can be continued
+		 */
+		if (size == scp_dump.ramdump_length - offset) {
+			atomic_set(&coredumping, false);
+			pr_notice("[SCP] coredumping:%d, coredump complete\n",
+				atomic_read(&coredumping));
+			complete(&scp_coredump_comp);
+		}
 	}
 
-	mutex_unlock(&scp_excep_mutex);
 
 	return length;
 }
@@ -405,8 +448,6 @@ int scp_excep_init(void)
 {
 	int dram_size = 0;
 
-	mutex_init(&scp_excep_mutex);
-
 	/* alloc dump memory */
 	scp_dump.detail_buff = vmalloc(SCP_AED_STR_LEN);
 	if (!scp_dump.detail_buff)
@@ -416,14 +457,14 @@ int scp_excep_init(void)
 	if ((int)(scp_region_info->ap_dram_size) > 0)
 		dram_size = scp_region_info->ap_dram_size;
 
-	scp_dump.ramdump = vmalloc(sizeof(struct MemoryDump));
-	if (!scp_dump.ramdump)
-		return -1;
+	scp_dump.ramdump = NULL;
 
 	/* init global values */
 	scp_dump.ramdump_length = 0;
 	/* 1: ee on, 0: ee disable */
 	scp_ee_enable = 1;
+	/* all coredump need element is prepare done */
+	complete(&scp_coredump_comp);
 
 	return 0;
 }

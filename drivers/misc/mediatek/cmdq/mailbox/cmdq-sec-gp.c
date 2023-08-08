@@ -21,10 +21,18 @@
 
 void cmdq_sec_setup_tee_context(struct cmdq_sec_tee_context *tee)
 {
+#if defined(CONFIG_TEEGRIS_TEE_SUPPORT)
+	tee->uuid = (TEEC_UUID) { 0x00000000, 0x4D54, 0x4B5F,
+		{0x42, 0x46, 0x43, 0x4D, 0x44, 0x51, 0x54, 0x41} };
+#else
 	/* 09010000 0000 0000 0000000000000000 */
 	tee->uuid = (struct TEEC_UUID) { 0x09010000, 0x0, 0x0,
 		{ 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 } };
+#endif
 }
+
+#include <linux/atomic.h>
+static atomic_t m4u_init = ATOMIC_INIT(0);
 
 s32 cmdq_sec_init_context(struct cmdq_sec_tee_context *tee)
 {
@@ -36,13 +44,19 @@ s32 cmdq_sec_init_context(struct cmdq_sec_tee_context *tee)
 		cmdq_msg("[SEC]Microtrust TEE is not ready, wait...");
 		msleep(1000);
 	}
-#else
+#elif defined(CONFIG_TRUSTONIC_TEE_SUPPORT)
 	while (!is_mobicore_ready()) {
 		cmdq_msg("[SEC]Trustonic TEE is not ready, wait...");
 		msleep(1000);
 	}
 #endif
 	cmdq_log("[SEC]TEE is ready");
+
+	/* do m4u sec init */
+	if (atomic_cmpxchg(&m4u_init, 0, 1) == 0) {
+		m4u_sec_init();
+		cmdq_msg("[SEC] M4U_sec_init is called\n");
+	}
 
 	status = TEEC_InitializeContext(NULL, &tee->gp_context);
 	if (status != TEEC_SUCCESS)
@@ -62,7 +76,7 @@ s32 cmdq_sec_allocate_wsm(struct cmdq_sec_tee_context *tee,
 	void **wsm_buffer, u8 idx, u32 size)
 {
 	s32 status;
-	struct TEEC_SharedMemory *mem = &tee->shared_mem[idx];
+	TYPE_STRUCT TEEC_SharedMemory *mem = &tee->shared_mem[idx];
 
 	if (!wsm_buffer)
 		return -EINVAL;
@@ -133,10 +147,10 @@ s32 cmdq_sec_execute_session(struct cmdq_sec_tee_context *tee,
 	u32 cmd, s32 timeout_ms, bool mem_ex1, bool mem_ex2)
 {
 	s32 status;
-	struct TEEC_Operation operation;
+	TYPE_STRUCT TEEC_Operation operation;
 	u64 ts = sched_clock();
 
-	memset(&operation, 0, sizeof(struct TEEC_Operation));
+	memset(&operation, 0, sizeof(TYPE_STRUCT TEEC_Operation));
 #if defined(CONFIG_TRUSTONIC_TEE_SUPPORT)
 	operation.param_types = TEEC_PARAM_TYPES(TEEC_MEMREF_PARTIAL_INOUT,
 		mem_ex1 ? TEEC_MEMREF_PARTIAL_INOUT : TEEC_NONE,

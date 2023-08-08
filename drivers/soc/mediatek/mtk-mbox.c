@@ -25,7 +25,7 @@
  * @param src: src address
  * @param size: memory size
  */
-void mtk_memcpy_to_tinysys(void __iomem *dest, const void *src, int size)
+void mtk_memcpy_to_tinysys(void __iomem *dest, const void *src, uint32_t size)
 {
 	int i;
 	u32 __iomem *t = dest;
@@ -41,7 +41,7 @@ void mtk_memcpy_to_tinysys(void __iomem *dest, const void *src, int size)
  * @param src: src address
  * @param size: memory size
  */
-void mtk_memcpy_from_tinysys(void *dest, const void __iomem *src, int size)
+void mtk_memcpy_from_tinysys(void *dest, const void __iomem *src, uint32_t size)
 {
 	int i;
 	u32 *t = dest;
@@ -62,7 +62,7 @@ int mtk_mbox_write_hd(struct mtk_mbox_device *mbdev, unsigned int mbox,
 	struct mtk_mbox_info *minfo;
 	struct mtk_ipi_msg *ipimsg;
 	void __iomem *base;
-	int len;
+	uint32_t len;
 	unsigned long flags;
 
 	if (!mbdev) {
@@ -82,7 +82,8 @@ int mtk_mbox_write_hd(struct mtk_mbox_device *mbdev, unsigned int mbox,
 	ipimsg = (struct mtk_ipi_msg *)msg;
 	len = ipimsg->ipihd.len;
 
-	if (len > size * MBOX_SLOT_SIZE)
+	if ((slot_ofs + sizeof(struct mtk_ipi_msg_hd) + len)
+		> size * MBOX_SLOT_SIZE)
 		return MBOX_WRITE_SZ_ERR;
 
 	spin_lock_irqsave(&mbdev->info_table[mbox].mbox_lock, flags);
@@ -136,7 +137,8 @@ int mtk_mbox_read_hd(struct mtk_mbox_device *mbdev, unsigned int mbox,
 	size = minfo->slot;
 	ipihd = (struct mtk_ipi_msg_hd *)(base + slot_ofs);
 
-	if (ipihd->len > size * MBOX_SLOT_SIZE)
+	if ((slot_ofs + sizeof(struct mtk_ipi_msg_hd) + ipihd->len)
+		> size * MBOX_SLOT_SIZE)
 		return MBOX_READ_SZ_ERR;
 
 	spin_lock_irqsave(&mbdev->info_table[mbox].mbox_lock, flags);
@@ -632,6 +634,142 @@ static irqreturn_t mtk_mbox_isr(int irq, void *dev_id)
 }
 
 /*
+ * mbox driver isr for scp only, in isr context
+ */
+static irqreturn_t mtk_mbox_scp_isr(int irq, void *dev_id)
+{
+	unsigned int mbox, irq_status, irq_temp;
+	struct mtk_mbox_pin_recv *pin_recv;
+	struct mtk_mbox_info *minfo = (struct mtk_mbox_info *)dev_id;
+	struct mtk_mbox_device *mbdev = minfo->mbdev;
+	struct mtk_ipi_msg_hd *ipihead;
+	unsigned long flags;
+	//void *user_data;
+	int ret;
+	int i;
+
+	mbox = minfo->id;
+	ret = MBOX_DONE;
+
+	spin_lock_irqsave(&minfo->mbox_lock, flags);
+	/*lock pin*/
+	mtk_mbox_set_lock(mbdev, mbox, MBOX_PIN_BUSY);
+
+	/*get irq status*/
+	irq_status = mtk_mbox_read_recv_irq(mbdev, mbox);
+	irq_temp = 0;
+	spin_unlock_irqrestore(&minfo->mbox_lock, flags);
+
+	if (mbdev->pre_cb)
+		mbdev->pre_cb(mbdev->prdata);
+
+	/*execute all receive pin handler*/
+	for (i = 0; i < mbdev->recv_count; i++) {
+		pin_recv = &(mbdev->pin_recv_table[i]);
+		if (pin_recv->mbox != mbox)
+			continue;
+		/*recv irq trigger*/
+		if (((0x1 << pin_recv->pin_index) & irq_status) > 0x0) {
+			pin_recv->recv_record.recv_irq_count++;
+			irq_temp = irq_temp | (0x1 << pin_recv->pin_index);
+			/*check user buf*/
+			if (!pin_recv->pin_buf) {
+				pr_err("[MBOX Error]null ptr dev=%s ipi_id=%d",
+					mbdev->name, pin_recv->chan_id);
+				BUG_ON(1);
+			}
+			if (minfo->opt == MBOX_OPT_QUEUE_DIR ||
+			 minfo->opt == MBOX_OPT_QUEUE_SMEM) {
+				/*queue mode*/
+				ipihead = (struct mtk_ipi_msg_hd *)(minfo->base
+					+ (pin_recv->offset * MBOX_SLOT_SIZE));
+				ret = mtk_mbox_read_hd(mbdev, mbox,
+					pin_recv->offset, pin_recv->pin_buf);
+
+				if (pin_recv->recv_opt == MBOX_RECV_MESSAGE
+					&& pin_recv->cb_ctx_opt
+						== MBOX_CB_IN_ISR
+					&& pin_recv->mbox_pin_cb
+					&& ret == MBOX_DONE) {
+					pin_recv->recv_record.pre_timestamp
+						= cpu_clock(0);
+					pin_recv->mbox_pin_cb(ipihead->id,
+					pin_recv->prdata, pin_recv->pin_buf,
+					(unsigned int)ipihead->len);
+					pin_recv->recv_record.post_timestamp
+						= cpu_clock(0);
+					pin_recv->recv_record.cb_count++;
+				}
+			} else {
+				/*direct mode*/
+				ret = mtk_mbox_read(mbdev, mbox,
+					pin_recv->offset, pin_recv->pin_buf,
+					pin_recv->msg_size * MBOX_SLOT_SIZE);
+
+				if (pin_recv->recv_opt == MBOX_RECV_MESSAGE
+					&& pin_recv->cb_ctx_opt
+						== MBOX_CB_IN_ISR
+					&& pin_recv->mbox_pin_cb
+					&& ret == MBOX_DONE) {
+					pin_recv->recv_record.pre_timestamp
+						= cpu_clock(0);
+					pin_recv->mbox_pin_cb(pin_recv->chan_id,
+					pin_recv->prdata, pin_recv->pin_buf,
+					pin_recv->msg_size * MBOX_SLOT_SIZE);
+					pin_recv->recv_record.post_timestamp
+						= cpu_clock(0);
+					pin_recv->recv_record.cb_count++;
+				}
+			}
+
+			if (ret != MBOX_DONE)
+				pr_err("[MBOX ISR]cp to buf fail,dev=%s chan=%d ret=%d",
+				mbdev->name, pin_recv->chan_id, ret);
+
+			/*dump recv info*/
+			if (mbdev->log_enable)
+				mtk_mbox_dump_recv(mbdev, i);
+		}
+	}
+
+	if (mbdev->post_cb)
+		mbdev->post_cb(mbdev->prdata);
+
+	/*clear irq status*/
+	spin_lock_irqsave(&minfo->mbox_lock, flags);
+	mtk_mbox_clr_irq(mbdev, mbox, irq_temp);
+	/*release pin*/
+	mtk_mbox_set_lock(mbdev, mbox, MBOX_DONE);
+	spin_unlock_irqrestore(&minfo->mbox_lock, flags);
+
+	if (irq_temp == 0 && irq_status != 0) {
+		pr_err("[MBOX ISR]dev=%s pin table err, status=%x",
+			mbdev->name, irq_status);
+		for (i = 0; i < mbdev->recv_count; i++) {
+			pin_recv = &(mbdev->pin_recv_table[i]);
+			mtk_mbox_dump_recv_pin(mbdev, pin_recv);
+		}
+	}
+
+	/*notify all receive pin handler*/
+	for (i = 0; i < mbdev->recv_count; i++) {
+		pin_recv = &(mbdev->pin_recv_table[i]);
+		if (pin_recv->mbox != mbox)
+			continue;
+		/*recv irq trigger*/
+		if (((0x1 << pin_recv->pin_index) & irq_status) > 0x0) {
+			/*notify task*/
+			if (mbdev->ipi_cb) {
+				mbdev->ipi_cb(pin_recv, mbdev->ipi_priv);
+				pin_recv->recv_record.notify_count++;
+			}
+		}
+	}
+
+	return IRQ_HANDLED;
+}
+
+/*
  *  mtk_smem_init, initial share memory
  *
  */
@@ -755,6 +893,97 @@ int mtk_mbox_probe(struct platform_device *pdev, struct mtk_mbox_device *mbdev,
 
 		ret = request_irq(minfo->irq_num, mtk_mbox_isr,
 				IRQF_TRIGGER_NONE, "MBOX_ISR", (void *) minfo);
+		if (ret) {
+			pr_err("MBOX %d request irq Failed\n", mbox);
+			goto mtk_mbox_probe_fail;
+		}
+	}
+
+	return MBOX_DONE;
+
+mtk_mbox_probe_fail:
+	return MBOX_CONFIG_ERR;
+}
+
+/*
+ * mtk_mbox_scp_probe , porbe and initial mbox for scp only
+ *
+ */
+
+int mtk_mbox_scp_probe(struct platform_device *pdev, struct mtk_mbox_device *mbdev,
+		unsigned int mbox)
+{
+	struct mtk_mbox_info *minfo;
+	char name[32];
+	int ret;
+	struct device *dev = &pdev->dev;
+	struct resource *res;
+
+	minfo = &(mbdev->info_table[mbox]);
+
+	if (pdev) {
+		snprintf(name, sizeof(name), "mbox%d_base", mbox);
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
+		minfo->base = devm_ioremap_resource(dev, res);
+
+		if (IS_ERR((void const *) minfo->base))
+			pr_err("MBOX %d can't remap base\n", mbox);
+
+		minfo->slot = (unsigned int)resource_size(res)/MBOX_SLOT_SIZE;
+
+		/*init reg*/
+		snprintf(name, sizeof(name), "mbox%d_init", mbox);
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
+		minfo->init_base_reg = devm_ioremap_resource(dev, res);
+		if (IS_ERR((void const *) minfo->init_base_reg))
+			pr_err("MBOX %d can't find init reg\n", mbox);
+		/*set irq reg*/
+		snprintf(name, sizeof(name), "mbox%d_set", mbox);
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
+		minfo->set_irq_reg = devm_ioremap_resource(dev, res);
+		if (IS_ERR((void const *) minfo->set_irq_reg)) {
+			pr_err("MBOX %d can't find set reg\n", mbox);
+			goto mtk_mbox_probe_fail;
+		}
+		/*clear reg*/
+		snprintf(name, sizeof(name), "mbox%d_clr", mbox);
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
+		minfo->clr_irq_reg = devm_ioremap_resource(dev, res);
+		if (IS_ERR((void const *) minfo->clr_irq_reg)) {
+			pr_err("MBOX %d can't find clr reg\n", mbox);
+			goto mtk_mbox_probe_fail;
+		}
+		/*send status reg*/
+		snprintf(name, sizeof(name), "mbox%d_send", mbox);
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
+		minfo->send_status_reg = devm_ioremap_resource(dev, res);
+		if (IS_ERR((void const *) minfo->send_status_reg)) {
+			pr_notice("MBOX %d can't find send status reg\n", mbox);
+			minfo->send_status_reg = NULL;
+		}
+		/*recv status reg*/
+		snprintf(name, sizeof(name), "mbox%d_recv", mbox);
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
+		minfo->recv_status_reg = devm_ioremap_resource(dev, res);
+		if (IS_ERR((void const *) minfo->recv_status_reg)) {
+			pr_notice("MBOX %d can't find recv status reg\n", mbox);
+			minfo->recv_status_reg = NULL;
+		}
+
+		snprintf(name, sizeof(name), "mbox%d", mbox);
+		minfo->irq_num = platform_get_irq_byname(pdev, name);
+		if (minfo->irq_num < 0) {
+			pr_err("MBOX %d can't find IRQ\n", mbox);
+			goto mtk_mbox_probe_fail;
+		}
+
+		minfo->enable = true;
+		minfo->id = mbox;
+		minfo->mbdev = mbdev;
+		spin_lock_init(&minfo->mbox_lock);
+
+		ret = request_threaded_irq(minfo->irq_num, NULL, mtk_mbox_scp_isr,
+				IRQF_ONESHOT, "MBOX_SCP_ISR", (void *) minfo);
 		if (ret) {
 			pr_err("MBOX %d request irq Failed\n", mbox);
 			goto mtk_mbox_probe_fail;

@@ -68,6 +68,26 @@ enum SEMAPHORE_FLAG {
 	NR_FLAG = 9,
 };
 
+/* scp semaphore 3way definition */
+enum SEMAPHORE_3WAY_FLAG {
+	SEMA_SCP_3WAY_UART = 0,
+	SEMA_SCP_3WAY_C2C_A = 1,
+	SEMA_SCP_3WAY_C2C_B = 2,
+	SEMA_SCP_3WAY_DVFS = 3,
+	SEMA_SCP_3WAY_AUDIO = 4,
+	SEMA_SCP_3WAY_AUDIOREG = 5,
+	SEMA_SCP_3WAY_NUM = 6,
+};
+
+/* scp semaphore status */
+enum  SEMAPHORE_STATUS {
+	SEMAPHORE_NOT_INIT = -1,
+	SEMAPHORE_SUCCESS = 0,
+	SEMAPHORE_FAIL = 1,
+};
+
+#define SCP_SEMA_AUDIOREG SEMA_SCP_3WAY_AUDIOREG
+
 /* scp reset status */
 enum SCP_RESET_STATUS {
 	RESET_STATUS_STOP = 0,
@@ -118,11 +138,12 @@ enum scp_reserve_mem_id_t {
 	defined(CONFIG_MTK_VOW_SUPPORT)
 	AUDIO_IPI_MEM_ID,
 #endif
-#ifdef CONFIG_MTK_VOW_BARGE_IN_SUPPORT
 	VOW_BARGEIN_MEM_ID,
-#endif
 #ifdef SCP_PARAMS_TO_SCP_SUPPORT
 	SCP_DRV_PARAMS_MEM_ID,
+#endif
+#ifdef CONFIG_MTK_ULTRASND_PROXIMITY
+	ULTRA_MEM_ID,
 #endif
 	NUMS_MEM_ID,
 };
@@ -166,6 +187,7 @@ extern struct scp_regs scpreg;
 extern struct device_attribute dev_attr_scp_mobile_log;
 extern struct device_attribute dev_attr_scp_A_get_last_log;
 extern struct device_attribute dev_attr_scp_A_status;
+extern struct device_attribute dev_attr_log_filter;
 extern struct bin_attribute bin_attr_scp_dump;
 
 /* scp loggger */

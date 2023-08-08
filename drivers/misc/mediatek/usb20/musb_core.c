@@ -85,6 +85,7 @@
 #include <linux/io.h>
 #include <linux/idr.h>
 #include <linux/dma-mapping.h>
+#include <linux/proc_fs.h>
 
 #if defined(CONFIG_USBIF_COMPLIANCE)
 #include <linux/kthread.h>
@@ -97,6 +98,14 @@
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
 #include "mtk_musb.h"
+#endif
+#if IS_ENABLED(CONFIG_USB_NOTIFY_LAYER)
+#include <linux/usb_notify.h>
+#endif
+#if (defined CONFIG_MUIC_NOTIFIER) && (!defined CONFIG_USB_NOTIFY_LAYER) \
+	&& (defined CONFIG_MUIC_S2MU005)
+#include <linux/muic/muic.h>
+#include <linux/muic/muic_notifier.h>
 #endif
 
 static void (*usb_hal_dpidle_request_fptr)(int);
@@ -1402,6 +1411,11 @@ void musb_start(struct musb *musb)
 		if (musb->softconnect) {
 			DBG(0, "add softconn\n");
 			val |= MUSB_POWER_SOFTCONN;
+		} else if (!mtk_musb->is_ready && !musb->is_host) {
+			DBG(0, "pullup dp\n");
+			usb_dpdm_pullup(true);
+			mdelay(50);
+			usb_dpdm_pullup(false);
 		}
 		musb_writeb(regs, MUSB_POWER, val);
 	}
@@ -2451,6 +2465,20 @@ static void musb_free(struct musb *musb)
 	usb_put_hcd(musb_to_hcd(musb));
 }
 
+#if IS_ENABLED(CONFIG_USB_NOTIFY_LAYER)
+static void musb_usb_event_work(struct work_struct *work)
+{
+	struct musb *musb = container_of(work, struct musb, usb_event_work.work);
+
+	pr_info("usb: %s, event_state: %d\n", __func__, musb->event_state);
+
+	if (musb->event_state)
+		send_usb_err_uevent(USB_ERR_ABNORMAL_RESET, NOTIFY);
+	else
+		send_usb_err_uevent(USB_ERR_ABNORMAL_RESET, RELEASE);
+}
+#endif
+
 /*
  * Perform generic per-controller initialization.
  *
@@ -2658,7 +2686,7 @@ static int musb_init_controller
 	if (status < 0)
 		goto fail3;
 
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_PROC_FS
 	status = musb_init_debugfs(musb);
 	if (status < 0)
 		goto fail4;
@@ -2668,11 +2696,14 @@ static int musb_init_controller
 	if (status)
 		goto fail5;
 #endif
+#if IS_ENABLED(CONFIG_USB_NOTIFY_LAYER)
+	INIT_DELAYED_WORK(&musb->usb_event_work, musb_usb_event_work);
+#endif
 
 	pm_runtime_put(musb->controller);
 
 	return 0;
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_PROC_FS
 #ifdef CONFIG_SYSFS
 fail5:
 	musb_exit_debugfs(musb);
@@ -2716,11 +2747,15 @@ static int musb_probe(struct platform_device *pdev)
 	struct resource *iomem;
 
 	iomem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!iomem)
+		return -ENODEV;
 	base = devm_ioremap(dev, iomem->start, resource_size(iomem));
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
 	iomem = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	if (!iomem)
+		return -ENODEV;
 	pbase = devm_ioremap(dev, iomem->start, resource_size(iomem));
 	if (IS_ERR(pbase))
 		return PTR_ERR(pbase);
@@ -2747,7 +2782,7 @@ static int musb_remove(struct platform_device *pdev)
 	 *  - Peripheral mode: peripheral is deactivated (or never-activated)
 	 *  - OTG mode: both roles are deactivated (or never-activated)
 	 */
-#ifdef CONFIG_DEBUG_FS
+#ifdef CONFIG_PROC_FS
 	musb_exit_debugfs(musb);
 #endif
 	musb_shutdown(pdev);
@@ -2892,7 +2927,17 @@ bool __attribute__ ((weak)) usb_pre_clock(bool enable)
 static int musb_suspend_noirq(struct device *dev)
 {
 	struct musb *musb = dev_to_musb(dev);
-	/*unsigned long flags; */
+
+	if (is_host_active(musb)) {
+		if (musb->host_suspend) {
+			DBG(0, "host suspend\n");
+			musb_platform_enable_wakeup(musb);
+			musb_platform_disable_clk(musb);
+			musb_platform_unprepare_clk(musb);
+			usb_hal_dpidle_request(USB_DPIDLE_SUSPEND);
+		}
+		return 0;
+	}
 
 	/*No need spin lock in xxx_noirq() */
 	/*spin_lock_irqsave(&musb->lock, flags); */
@@ -2925,6 +2970,17 @@ static int musb_suspend_noirq(struct device *dev)
 static int musb_resume_noirq(struct device *dev)
 {
 	struct musb *musb = dev_to_musb(dev);
+
+	if (is_host_active(musb)) {
+		if (musb->host_suspend) {
+			DBG(0, "host resume\n");
+			usb_hal_dpidle_request(USB_DPIDLE_RESUME);
+			musb_platform_prepare_clk(musb);
+			musb_platform_enable_clk(musb);
+			musb_platform_disable_wakeup(musb);
+		}
+		return 0;
+	}
 
 	usb_pre_clock(true);
 
@@ -3076,3 +3132,78 @@ static struct kernel_param_ops musb_force_on_param_ops = {
 	.get = param_get_int,
 };
 module_param_cb(musb_force_on, &musb_force_on_param_ops, &musb_force_on, 0644);
+
+#if (defined CONFIG_MUIC_NOTIFIER) && (!defined CONFIG_USB_NOTIFY_LAYER) \
+	&& (defined CONFIG_MUIC_S2MU005)
+struct usb_notifier_platform_data {
+	struct  notifier_block usb_nb;
+	struct  notifier_block vbus_nb;
+	int gpio_redriver_en;
+	int can_disable_usb;
+};
+
+static atomic_t s2mu_usb_cable_state = ATOMIC_INIT(0);
+int get_usb_usb_cable_state(void)
+{
+	return atomic_read(&s2mu_usb_cable_state);
+}
+
+void mt_set_usb_cable_state(bool inserted)
+{
+	atomic_set(&s2mu_usb_cable_state, inserted);
+	if (inserted) {
+		/* set_cable_state(STANDARD_HOST, true);*/
+		pr_info("mt_usb_connect()\n");
+		mt_usb_connect();
+	} else {
+		/* set_cable_state(STANDARD_HOST, false); */
+		pr_info("mt_usb_disconnect()\n");
+		mt_usb_disconnect();
+	}
+}
+EXPORT_SYMBOL_GPL(mt_set_usb_cable_state);
+
+static int mtk_usb_handle_notification(struct notifier_block *nb,
+	unsigned long action, void *data)
+{
+	muic_attached_dev_t attached_dev = *(muic_attached_dev_t *)data;
+
+	pr_info("%s(%lu,%d)\n",	__func__, action, attached_dev);
+
+	switch (attached_dev) {
+	case ATTACHED_DEV_USB_MUIC:
+	case ATTACHED_DEV_CDP_MUIC:
+	case ATTACHED_DEV_UNOFFICIAL_ID_USB_MUIC:
+	case ATTACHED_DEV_UNOFFICIAL_ID_CDP_MUIC:
+	case ATTACHED_DEV_JIG_USB_OFF_MUIC:
+	case ATTACHED_DEV_JIG_USB_ON_MUIC:
+		if (action == MUIC_NOTIFY_CMD_DETACH)
+			mt_set_usb_cable_state(false);
+		else if (action == MUIC_NOTIFY_CMD_ATTACH)
+			mt_set_usb_cable_state(true);
+		else
+			pr_info("%s - ACTION Error!\n", __func__);
+		break;
+
+	default:
+		break;
+	}
+	return 0;
+}
+
+static int __init muic_notifier_init(void)
+{
+	struct usb_notifier_platform_data *pdata = NULL;
+
+	pr_info("%s\n", __func__);
+	pdata = kzalloc(sizeof(struct usb_notifier_platform_data), GFP_KERNEL);
+	if (!pdata)
+		return -ENOMEM;
+
+	return muic_notifier_register(&pdata->usb_nb,
+				mtk_usb_handle_notification,
+				MUIC_NOTIFY_DEV_USB);
+}
+late_initcall(muic_notifier_init);
+#endif
+

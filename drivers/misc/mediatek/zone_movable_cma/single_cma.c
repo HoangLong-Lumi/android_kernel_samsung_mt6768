@@ -246,6 +246,7 @@ static int __init zmc_memory_init(struct reserved_mem *rmem)
 		memblock_free(rmem->base, rmem->size);
 		memblock_add(rmem->base, rmem->size);
 	}
+	rmem->reusable = true;
 
 	return 0;
 }

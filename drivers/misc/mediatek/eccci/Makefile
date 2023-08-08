@@ -12,14 +12,19 @@
 #
 
 # mt6893&mt6885 co-platform config
-ifeq (y, $(filter y, $(CONFIG_MACH_MT6893)))
+
+ifeq (y, $(filter y, $(CONFIG_MACH_MT6877)))
+MTK_PLATFORM := mt6853
+subdir-ccflags-y += -DCCCI_PLATFORM_MT6877
+else ifeq (y, $(filter y, $(CONFIG_MACH_MT6781)))
+MTK_PLATFORM := mt6785
+subdir-ccflags-y += -DCCCI_PLATFORM_MT6781
+else ifeq (y, $(filter y, $(CONFIG_MACH_MT6893)))
 MTK_PLATFORM := mt6885
-else
-ifeq (y, $(filter y, $(CONFIG_MACH_MT6833)))
+else ifeq (y, $(filter y, $(CONFIG_MACH_MT6833)))
 MTK_PLATFORM := mt6833
 else
 MTK_PLATFORM := $(CONFIG_MTK_PLATFORM)
-endif
 endif
 
 ifeq ($(CONFIG_MTK_ECCCI_DRIVER), y)
@@ -50,6 +55,8 @@ obj-$(CONFIG_MTK_MIX_DEVICES) +=  mixdev/
 ifeq ($(CONFIG_MTK_ECCCI_C2K), y)
 ccci-y += modem_sys3.o
 endif
+
+ccci-$(CONFIG_MTK_SRIL_SUPPORT) += modem_io_device.o
 
 # platform code
 obj-y += $(subst ",,$(MTK_PLATFORM))/

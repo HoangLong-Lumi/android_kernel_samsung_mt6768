@@ -51,6 +51,9 @@
 #include <trace/events/power.h>
 #include <linux/percpu.h>
 #include <linux/prctl.h>
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
 
 #include <asm/alternative.h>
 #include <asm/compat.h>
@@ -271,6 +274,12 @@ void __show_regs(struct pt_regs *regs)
 		top_reg = 29;
 	}
 
+#ifdef CONFIG_SEC_DEBUG
+	if (!user_mode(regs)) {
+		sec_save_context(_THIS_CPU, regs);
+	}
+#endif
+
 	show_regs_print_info(KERN_DEFAULT);
 	print_symbol("pc : %s\n", regs->pc);
 	print_symbol("lr : %s\n", lr);
@@ -299,6 +308,17 @@ void show_regs(struct pt_regs * regs)
 	__show_regs(regs);
 	dump_backtrace(regs, NULL);
 }
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+void show_regs_auto_comment(struct pt_regs * regs, bool comm)
+{
+	__show_regs(regs);
+	if (comm)
+		dump_backtrace_auto_comment(regs, NULL);
+	else
+		dump_backtrace(regs, NULL);
+}
+#endif
 
 static void tls_thread_flush(void)
 {

@@ -48,9 +48,9 @@
 /* ============================================================ */
 #define BAT_VOLTAGE_LOW_BOUND 3400
 #define BAT_VOLTAGE_HIGH_BOUND 3450
-#define LOW_TMP_BAT_VOLTAGE_LOW_BOUND 3350
+#define LOW_TMP_BAT_VOLTAGE_LOW_BOUND 3250
 #define SHUTDOWN_TIME 40
-#define AVGVBAT_ARRAY_SIZE 30
+#define AVGVBAT_ARRAY_SIZE 5
 #define INIT_VOLTAGE 3450
 #define BATTERY_SHUTDOWN_TEMPERATURE 60
 
@@ -234,6 +234,7 @@ enum Fg_kernel_cmds {
 	FG_KERNEL_CMD_CHG_DECIMAL_RATE,
 	FG_KERNEL_CMD_FORCE_BAT_TEMP,
 	FG_KERNEL_CMD_SEND_BH_DATA,
+	FG_KERNEL_CMD_GET_DYNAMIC_CV,
 
 	FG_KERNEL_CMD_FROM_USER_NUMBER
 
@@ -340,6 +341,7 @@ enum daemon_cmd_int_data {
 	FG_SET_OCV_SOC = FG_SET_ANCHOR + 14,
 	FG_SET_CON0_SOFF_VALID = FG_SET_ANCHOR + 15,
 	FG_SET_ZCV_INTR_EN = FG_SET_ANCHOR + 16,
+	FG_SET_DYNAMIC_CV = FG_SET_ANCHOR + 17,
 	FG_SET_DATA_MAX,
 };
 
@@ -380,6 +382,10 @@ struct fuel_gauge_custom_data {
 	int r_fg_value;
 	int com_r_fg_value;
 	int mtk_chr_exist;
+
+	/* Dynamic cv*/
+	int dynamic_cv_factor;
+	int charger_ieoc;
 
 	/* Aging Compensation 1*/
 	int aging_one_en;
@@ -486,6 +492,7 @@ struct fuel_gauge_custom_data {
 	/* ZCV update */
 	int zcv_suspend_time;
 	int sleep_current_avg;
+	int zcv_com_vol_limit;
 
 	int dc_ratio_sel;
 	int dc_r_cnt;
@@ -611,10 +618,10 @@ struct FUELGAUGE_CHARGE_PSEUDO100_S {
 };
 
 struct FUELGAUGE_PROFILE_STRUCT {
-	unsigned int mah;
+	int mah;
 	unsigned short voltage;
 	unsigned short resistance; /* Ohm*/
-	unsigned int percentage;
+	int percentage;
 	struct FUELGAUGE_CHARGER_STRUCT charge_r;
 };
 
@@ -666,6 +673,9 @@ struct battery_data {
 	/* Add for Battery Service */
 	int BAT_batt_vol;
 	int BAT_batt_temp;
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	unsigned int f_mode;
+#endif
 };
 
 struct BAT_EC_Struct {
@@ -814,9 +824,17 @@ struct mtk_battery {
 
 /*battery status*/
 	int soc;
+	int precise_soc;
 	int ui_soc;
+	int precise_ui_soc;
 	int d_saved_car;
 	int tbat_precise;
+	int dynamic_cv;
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	int tbat_adc;
+	int is_fake_soc;
+	int is_full;
+#endif
 
 /*battery flag*/
 	bool init_flag;
@@ -957,7 +975,6 @@ enum {
 	SHUTDOWN_FACTOR_MAX
 };
 
-
 extern struct mtk_battery gm;
 extern struct battery_data battery_main;
 extern struct fuel_gauge_custom_data fg_cust_data;
@@ -982,6 +999,9 @@ extern int get_shutdown_cond_flag(void);
 /* mtk_battery.c */
 extern bool is_battery_init_done(void);
 extern int force_get_tbat(bool update);
+#if defined(CONFIG_BATTERY_SAMSUNG)
+extern void force_get_tbat_adc(void);
+#endif
 extern int bat_get_debug_level(void);
 extern bool is_kernel_power_off_charging(void);
 extern bool is_fg_disabled(void);
@@ -998,6 +1018,7 @@ extern int battery_get_charger_zcv(void);
 extern bool is_fg_disabled(void);
 extern int battery_notifier(int event);
 extern bool set_charge_power_sel(enum CHARGE_SEL select);
+extern void battery_set_charger_constant_voltage(u32 cv);
 
 /* pmic */
 extern int pmic_get_battery_voltage(void);

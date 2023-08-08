@@ -73,7 +73,28 @@
 
 #include "mtk_charger_intf.h"
 #include "mtk_charger_init.h"
+#include "mtk_battery.h"
+#include <tcpci_config.h>
 
+#if defined(CONFIG_BATTERY_SAMSUNG)
+#if defined(CONFIG_PDIC_NOTIFIER)
+#include <linux/usb/typec/common/pdic_notifier.h>
+#endif
+#if defined(CONFIG_BATTERY_NOTIFIER)
+#include <linux/battery/battery_notifier.h>
+#endif
+
+#if defined(CONFIG_DISCRETE_CHARGER) || defined(CONFIG_BATTERY_GKI)
+#include <../drivers/battery/common/sec_charging_common.h>
+#endif
+
+extern struct pdic_notifier_struct pd_noti;
+
+#if defined(CONFIG_PDIC_NOTIFIER)
+extern int pdc_clear(void);
+extern int pdc_hard_rst(void);
+#endif
+#endif
 static struct charger_manager *pinfo;
 static struct list_head consumer_head = LIST_HEAD_INIT(consumer_head);
 static DEFINE_MUTEX(consumer_mutex);
@@ -223,7 +244,7 @@ void _wake_up_charger(struct charger_manager *info)
 		__pm_stay_awake(&info->charger_wakelock);
 	spin_unlock_irqrestore(&info->slock, flags);
 	info->charger_thread_timeout = true;
-	wake_up(&info->wait_que);
+	wake_up_interruptible(&info->wait_que);
 }
 
 /* charger_manager ops  */
@@ -270,6 +291,17 @@ EXPORT_SYMBOL(charger_manager_get_by_name);
 int charger_manager_enable_high_voltage_charging(
 			struct charger_consumer *consumer, bool en)
 {
+#if defined(CONFIG_BATTERY_SAMSUNG)
+#if defined(CONFIG_DISCRETE_CHARGER) || defined(CONFIG_BATTERY_GKI)
+#if defined(CONFIG_SUPPORT_HV_CTRL)
+	union power_supply_propval propval = {0, };
+
+	propval.intval = !en;
+	psy_do_property("battery", set, POWER_SUPPLY_EXT_PROP_FLASH_STATE,
+			propval);
+#endif
+#endif
+#else
 	struct charger_manager *info = consumer->cm;
 	struct list_head *pos = NULL;
 	struct list_head *phead = &consumer_head;
@@ -309,7 +341,7 @@ int charger_manager_enable_high_voltage_charging(
 		mtk_pe50_stop_algo(info, true);
 
 	_wake_up_charger(info);
-
+#endif
 	return 0;
 }
 EXPORT_SYMBOL(charger_manager_enable_high_voltage_charging);
@@ -317,6 +349,9 @@ EXPORT_SYMBOL(charger_manager_enable_high_voltage_charging);
 int charger_manager_enable_power_path(struct charger_consumer *consumer,
 	int idx, bool en)
 {
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	return 0;
+#else
 	int ret = 0;
 	bool is_en = true;
 	struct charger_manager *info = consumer->cm;
@@ -357,15 +392,20 @@ int charger_manager_enable_power_path(struct charger_consumer *consumer,
 out:
 	mutex_unlock(&info->pp_lock[idx]);
 	return ret;
+#endif
 }
 
 int charger_manager_force_disable_power_path(struct charger_consumer *consumer,
 	int idx, bool disable)
 {
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	return 0;
+#else
 	struct charger_manager *info = consumer->cm;
 	struct charger_device *chg_dev = NULL;
 	int ret = 0;
-
+	if (info == NULL)
+		return -ENODEV;
 	switch (idx) {
 	case MAIN_CHARGER:
 		chg_dev = info->chg1_dev;
@@ -388,6 +428,7 @@ int charger_manager_force_disable_power_path(struct charger_consumer *consumer,
 out:
 	mutex_unlock(&info->pp_lock[idx]);
 	return ret;
+#endif
 }
 
 static int _charger_manager_enable_charging(struct charger_consumer *consumer,
@@ -594,6 +635,32 @@ int charger_manager_get_zcv(struct charger_consumer *consumer, int idx, u32 *uV)
 		chr_err("%s info is null\n", __func__);
 	}
 	chr_err("%s zcv:%d ret:%d\n", __func__, *uV, ret);
+
+	return 0;
+}
+
+int charger_manager_set_constant_voltage(struct charger_consumer *consumer, int idx, u32 uV)
+{
+	struct charger_manager *info = consumer->cm;
+	int ret = 0;
+	struct charger_device *pchg = NULL;
+
+	if (info != NULL) {
+		/* battery_cv update*/
+		info->data.battery_cv = uV;
+		if (idx == MAIN_CHARGER) {
+			pchg = info->chg1_dev;
+			ret = charger_dev_set_constant_voltage(pchg, uV);
+		} else if (idx == SLAVE_CHARGER) {
+			pchg = info->chg2_dev;
+			ret = charger_dev_set_constant_voltage(pchg, uV);
+		} else
+			ret = -1;
+
+	} else {
+		chr_err("%s info is null\n", __func__);
+	}
+	chr_err("%s charger cv:%d ret:%d\n", __func__, uV, ret);
 
 	return 0;
 }
@@ -1294,6 +1361,7 @@ int charger_manager_notifier(struct charger_manager *info, int event)
 
 int charger_psy_event(struct notifier_block *nb, unsigned long event, void *v)
 {
+#if !defined(CONFIG_BATTERY_SAMSUNG)
 	struct charger_manager *info =
 			container_of(nb, struct charger_manager, psy_nb);
 	struct power_supply *psy = v;
@@ -1316,7 +1384,7 @@ int charger_psy_event(struct notifier_block *nb, unsigned long event, void *v)
 			}
 		}
 	}
-
+#endif
 	return NOTIFY_DONE;
 }
 
@@ -1365,8 +1433,10 @@ static int mtk_charger_plug_in(struct charger_manager *info,
 	memset(&pinfo->sc.data, 0, sizeof(struct scd_cmd_param_t_1));
 	pinfo->sc.disable_in_this_plug = false;
 	wakeup_sc_algo_cmd(&pinfo->sc.data, SC_EVENT_PLUG_IN, 0);
+#if !defined(CONFIG_BATTERY_SAMSUNG)
 	charger_dev_set_input_current(info->chg1_dev,
 				info->chg1_data.input_current_limit);
+#endif
 	charger_dev_plug_in(info->chg1_dev);
 	return 0;
 }
@@ -1390,7 +1460,9 @@ static int mtk_charger_plug_out(struct charger_manager *info)
 
 	memset(&pinfo->sc.data, 0, sizeof(struct scd_cmd_param_t_1));
 	wakeup_sc_algo_cmd(&pinfo->sc.data, SC_EVENT_PLUG_OUT, 0);
+#if !defined(CONFIG_BATTERY_SAMSUNG)
 	charger_dev_set_input_current(info->chg1_dev, 100000);
+#endif
 	charger_dev_set_mivr(info->chg1_dev, info->data.min_charger_voltage);
 	charger_dev_plug_out(info->chg1_dev);
 	return 0;
@@ -1620,6 +1692,7 @@ static void mtk_chg_get_tchg(struct charger_manager *info)
 	int ret;
 	int tchg_min = -127, tchg_max = -127;
 	struct charger_data *pdata;
+	bool en = false;
 
 	pdata = &info->chg1_data;
 	ret = charger_dev_get_temperature(info->chg1_dev, &tchg_min, &tchg_max);
@@ -1648,27 +1721,33 @@ static void mtk_chg_get_tchg(struct charger_manager *info)
 
 	if (info->dvchg1_dev) {
 		pdata = &info->dvchg1_data;
-		ret = charger_dev_get_adc(info->dvchg1_dev, ADC_CHANNEL_TEMP_JC,
-					  &tchg_min, &tchg_max);
-		if (ret < 0) {
-			pdata->junction_temp_min = -127;
-			pdata->junction_temp_max = -127;
-		} else {
-			pdata->junction_temp_min = tchg_min;
-			pdata->junction_temp_max = tchg_max;
+		pdata->junction_temp_min = -127;
+		pdata->junction_temp_max = -127;
+		ret = charger_dev_is_enabled(info->dvchg1_dev, &en);
+		if (ret >= 0 && en) {
+			ret = charger_dev_get_adc(info->dvchg1_dev,
+						  ADC_CHANNEL_TEMP_JC,
+						  &tchg_min, &tchg_max);
+			if (ret >= 0) {
+				pdata->junction_temp_min = tchg_min;
+				pdata->junction_temp_max = tchg_max;
+			}
 		}
 	}
 
 	if (info->dvchg2_dev) {
 		pdata = &info->dvchg2_data;
-		ret = charger_dev_get_adc(info->dvchg2_dev, ADC_CHANNEL_TEMP_JC,
-					  &tchg_min, &tchg_max);
-		if (ret < 0) {
-			pdata->junction_temp_min = -127;
-			pdata->junction_temp_max = -127;
-		} else {
-			pdata->junction_temp_min = tchg_min;
-			pdata->junction_temp_max = tchg_max;
+		pdata->junction_temp_min = -127;
+		pdata->junction_temp_max = -127;
+		ret = charger_dev_is_enabled(info->dvchg2_dev, &en);
+		if (ret >= 0 && en) {
+			ret = charger_dev_get_adc(info->dvchg2_dev,
+						  ADC_CHANNEL_TEMP_JC,
+						  &tchg_min, &tchg_max);
+			if (ret >= 0) {
+				pdata->junction_temp_min = tchg_min;
+				pdata->junction_temp_max = tchg_max;
+			}
 		}
 	}
 }
@@ -1771,6 +1850,7 @@ stop_charging:
 
 static void kpoc_power_off_check(struct charger_manager *info)
 {
+#if !defined(CONFIG_BATTERY_SAMSUNG)
 	unsigned int boot_mode = get_boot_mode();
 	int vbus = 0;
 
@@ -1787,6 +1867,7 @@ static void kpoc_power_off_check(struct charger_manager *info)
 			}
 		}
 	}
+#endif
 }
 
 #ifdef CONFIG_PM
@@ -1891,10 +1972,15 @@ static int charger_routine_thread(void *arg)
 	unsigned long flags = 0;
 	bool is_charger_on = false;
 	int bat_current = 0, chg_current = 0;
+	int ret;
 
 	while (1) {
-		wait_event(info->wait_que,
+		ret = wait_event_interruptible(info->wait_que,
 			(info->charger_thread_timeout == true));
+		if (ret < 0) {
+			chr_err("%s: wait event been interrupted(%d)\n", __func__, ret);
+			continue;
+		}
 
 		mutex_lock(&info->charger_lock);
 		spin_lock_irqsave(&info->slock, flags);
@@ -1964,10 +2050,12 @@ static int mtk_charger_parse_dt(struct charger_manager *info,
 		info->algorithm_name = "SwitchCharging";
 	}
 
+#if !defined(CONFIG_BATTERY_SAMSUNG)
 	if (strcmp(info->algorithm_name, "SwitchCharging") == 0) {
 		chr_err("found SwitchCharging\n");
 		mtk_switch_charging_init(info);
 	}
+#endif
 #ifdef CONFIG_MTK_DUAL_CHARGER_SUPPORT
 	if (strcmp(info->algorithm_name, "DualSwitchCharging") == 0) {
 		pr_debug("found DualSwitchCharging\n");
@@ -2992,7 +3080,9 @@ static ssize_t mtk_chg_en_power_path_write(struct file *file,
 
 	ret = kstrtou32(desc, 10, &enable);
 	if (ret == 0) {
+#if !defined(CONFIG_BATTERY_SAMSUNG)
 		charger_dev_enable_powerpath(info->chg1_dev, enable);
+#endif
 		pr_debug("%s: enable power path = %d\n", __func__, enable);
 		return count;
 	}
@@ -3051,11 +3141,68 @@ static ssize_t mtk_chg_en_safety_timer_write(struct file *file,
 	return count;
 }
 
+static int mtk_chg_set_cv_show(struct seq_file *m, void *data)
+{
+	struct charger_manager *pinfo = m->private;
+
+	seq_printf(m, "%d\n", pinfo->data.battery_cv);
+
+	return 0;
+}
+
+static ssize_t mtk_chg_set_cv_write(struct file *file,
+	const char *buffer, size_t count, loff_t *data)
+{
+	int len = 0, ret = 0;
+	char desc[32] = {0};
+	unsigned int cv = 0;
+	struct charger_manager *info = PDE_DATA(file_inode(file));
+	struct power_supply *psy = NULL;
+	union  power_supply_propval dynamic_cv;
+
+
+	if (!info)
+		return -EINVAL;
+	if (count <= 0)
+		return -EINVAL;
+
+	len = (count < (sizeof(desc) - 1)) ? count : (sizeof(desc) - 1);
+	if (copy_from_user(desc, buffer, len))
+		return -EFAULT;
+
+	desc[len] = '\0';
+
+	ret = kstrtou32(desc, 10, &cv);
+	if (ret == 0) {
+		if (cv >= CV_HIGH_THRESHOLD) {
+			info->data.battery_cv = BATTERY_CV;
+			chr_info("%s: adjust charge voltage %dV too high, use default cv\n",
+					__func__, cv);
+		} else {
+			info->data.battery_cv = cv;
+			chr_info("%s: adjust charge voltage = %dV\n", __func__, cv);
+		}
+		psy = power_supply_get_by_name("battery");
+		if (!IS_ERR_OR_NULL(psy)) {
+			dynamic_cv.intval = info->data.battery_cv;
+			ret = power_supply_set_property(psy,
+				POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE, &dynamic_cv);
+			if (ret < 0)
+				chr_err("set gauge cv fail\n");
+
+		}
+		return count;
+	}
+	chr_err("%s: bad argument\n", __func__);
+	return count;
+}
+
 /* PROC_FOPS_RW(battery_cmd); */
 /* PROC_FOPS_RW(discharging_cmd); */
 PROC_FOPS_RW(current_cmd);
 PROC_FOPS_RW(en_power_path);
 PROC_FOPS_RW(en_safety_timer);
+PROC_FOPS_RW(set_cv);
 
 /* Create sysfs and procfs attributes */
 static int mtk_charger_setup_files(struct platform_device *pdev)
@@ -3123,6 +3270,8 @@ static int mtk_charger_setup_files(struct platform_device *pdev)
 			&mtk_chg_en_power_path_fops, info);
 	proc_create_data("en_safety_timer", 0640, battery_dir,
 			&mtk_chg_en_safety_timer_fops, info);
+	proc_create_data("set_cv", 0640, battery_dir,
+			&mtk_chg_set_cv_fops, info);
 
 _out:
 	return ret;
@@ -3136,6 +3285,9 @@ void notify_adapter_event(enum adapter_type type, enum adapter_event evt,
 	case MTK_PD_ADAPTER:
 		switch (evt) {
 		case MTK_PD_CONNECT_NONE:
+#if defined(CONFIG_BATTERY_SAMSUNG) && defined(CONFIG_PDIC_NOTIFIER)
+			pdc_clear();
+#endif
 			mutex_lock(&pinfo->charger_pd_lock);
 			chr_err("PD Notify Detach\n");
 			pinfo->pd_type = MTK_PD_CONNECT_NONE;
@@ -3144,6 +3296,9 @@ void notify_adapter_event(enum adapter_type type, enum adapter_event evt,
 			break;
 
 		case MTK_PD_CONNECT_HARD_RESET:
+#if defined(CONFIG_BATTERY_SAMSUNG) && defined(CONFIG_PDIC_NOTIFIER)
+			pdc_hard_rst();
+#endif
 			mutex_lock(&pinfo->charger_pd_lock);
 			chr_err("PD Notify HardReset\n");
 			pinfo->pd_type = MTK_PD_CONNECT_NONE;
@@ -3159,6 +3314,7 @@ void notify_adapter_event(enum adapter_type type, enum adapter_event evt,
 			pinfo->pd_type = MTK_PD_CONNECT_PE_READY_SNK;
 			mutex_unlock(&pinfo->charger_pd_lock);
 			/* PD is ready */
+			_wake_up_charger(pinfo);
 			break;
 
 		case MTK_PD_CONNECT_PE_READY_SNK_PD30:
@@ -3167,6 +3323,7 @@ void notify_adapter_event(enum adapter_type type, enum adapter_event evt,
 			pinfo->pd_type = MTK_PD_CONNECT_PE_READY_SNK_PD30;
 			mutex_unlock(&pinfo->charger_pd_lock);
 			/* PD30 is ready */
+			_wake_up_charger(pinfo);
 			break;
 
 		case MTK_PD_CONNECT_PE_READY_SNK_APDO:
@@ -3192,10 +3349,13 @@ void notify_adapter_event(enum adapter_type type, enum adapter_event evt,
 			pinfo->water_detected = *(bool *)val;
 			mutex_unlock(&pinfo->charger_pd_lock);
 
-			if (pinfo->water_detected == true)
+			if (pinfo->water_detected == true) {
 				pinfo->notify_code |= CHG_TYPEC_WD_STATUS;
-			else
+				charger_dev_enable(pinfo->chg1_dev, false);
+			} else {
 				pinfo->notify_code &= ~CHG_TYPEC_WD_STATUS;
+				charger_dev_enable(pinfo->chg1_dev, true);
+			}
 			mtk_chgstat_notify(pinfo);
 			break;
 		case MTK_TYPEC_HRESET_STATUS:
@@ -3206,6 +3366,9 @@ void notify_adapter_event(enum adapter_type type, enum adapter_event evt,
 			else
 				atomic_set(&pinfo->enable_kpoc_shdn, 0);
 			mutex_unlock(&pinfo->charger_pd_lock);
+#ifdef CONFIG_KPOC_GET_SOURCE_CAP_TRY
+			kpoc_power_off_check(pinfo);
+#endif /*CONFIG_KPOC_GET_SOURCE_CAP_TRY*/
 			break;
 		};
 	}
@@ -3402,6 +3565,18 @@ static void chg_nl_data_handler(struct sk_buff *skb)
 	data = NLMSG_DATA(nlh);
 
 	sc_msg = (struct sc_nl_msg_t *)data;
+
+	if (sc_msg->identity != SCD_NL_MAGIC) {
+		chr_err("[Netlink] not correct MTKSC netlink packet!%d\n",
+			sc_msg->identity);
+		return;
+	}
+
+	if (sc_msg->sc_ret_data_len > SCD_NL_MSG_MAX_LEN) {
+		chr_err("[Netlink] not correct MTKSC netlink data len!%d\n",
+			sc_msg->sc_ret_data_len);
+		return;
+	}
 
 	size = sc_msg->sc_ret_data_len + SCD_NL_MSG_T_HDR_LEN;
 
@@ -3842,7 +4017,9 @@ static int mtk_charger_probe(struct platform_device *pdev)
 	struct netlink_kernel_cfg cfg = {
 		.input = chg_nl_data_handler,
 	};
+#if !defined(CONFIG_BATTERY_SAMSUNG)
 	unsigned int boot_mode = get_boot_mode();
+#endif
 
 	chr_err("%s: starts\n", __func__);
 
@@ -3970,11 +4147,13 @@ static int mtk_charger_probe(struct platform_device *pdev)
 	info->chg1_consumer =
 		charger_manager_get_by_name(&pdev->dev, "charger_port1");
 
+#if !defined(CONFIG_BATTERY_SAMSUNG)
 	if (info->chg1_consumer != NULL &&
 	    boot_mode != KERNEL_POWER_OFF_CHARGING_BOOT &&
 	    boot_mode != LOW_POWER_OFF_CHARGING_BOOT)
 		charger_manager_force_disable_power_path(
 			info->chg1_consumer, MAIN_CHARGER, true);
+#endif
 
 	info->init_done = true;
 	_wake_up_charger(info);

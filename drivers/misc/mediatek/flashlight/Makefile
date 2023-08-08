@@ -16,6 +16,9 @@ obj-$(CONFIG_MTK_FLASHLIGHT_RT5081)      += flashlights-rt5081.o
 obj-$(CONFIG_MTK_FLASHLIGHT_MT6336)      += flashlights-mt6336.o
 obj-$(CONFIG_MTK_FLASHLIGHT_MT6370)      += flashlights-mt6370.o
 obj-$(CONFIG_MTK_FLASHLIGHT_MT6360)      += flashlights-mt6360.o
+obj-$(CONFIG_MTK_SM5714_FLASHLIGHT)      += flashlights-sm5714.o
+obj-$(CONFIG_MTK_S2MU106_FLASHLIGHT)     += flashlights-s2mu106.o
+obj-$(CONFIG_MTK_S2MU005_FLASHLIGHT)     += flashlights-s2mu005.o
 obj-$(CONFIG_MTK_FLASHLIGHT_DUMMY)       += flashlights-dummy.o
 obj-$(CONFIG_MTK_FLASHLIGHT_DUMMY_GPIO)  += flashlights-dummy-gpio.o
 
@@ -30,6 +33,9 @@ MTK_PROJECT := $(subst ",,$(CONFIG_ARCH_MTK_PROJECT))
 MTK_CUSTOM_PATH := $(srctree)/drivers/misc/mediatek
 
 ccflags-y += -D$(MTK_PLATFORM) -D$(MTK_PROJECT)
+
+subdir-ccflags-${CONFIG_MACH_MT6833} += \
+	-I$(MTK_CUSTOM_PATH)/include/mt-plat/mt6833/include/mach
 
 subdir-ccflags-y += \
 	-I$(MTK_CUSTOM_PATH)/include/mt-plat \

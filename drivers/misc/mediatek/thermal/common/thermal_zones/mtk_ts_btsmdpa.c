@@ -602,6 +602,16 @@ static __s32 mtk_ts_btsmdpa_volt_to_temp(__u32 dwVolt)
 	do_div(dwVCriAP, dwVCriAP2);
 
 
+#ifdef APPLY_PRECISE_BTS_TEMP
+	if ((dwVolt / 100) > ((__u32)dwVCriAP)) {
+		TRes = g_TAP_over_critical_low;
+	} else {
+		/* TRes = (39000*dwVolt) / (1800-dwVolt); */
+		/* TRes = (RAP_PULL_UP_R*dwVolt) / (RAP_PULL_UP_VOLT-dwVolt); */
+		TRes = ((long long)g_RAP_pull_up_R * dwVolt) /
+					(g_RAP_pull_up_voltage * 100 - dwVolt);
+	}
+#else
 	if (dwVolt > ((__u32)dwVCriAP)) {
 		TRes = g_TAP_over_critical_low;
 	} else {
@@ -611,6 +621,7 @@ static __s32 mtk_ts_btsmdpa_volt_to_temp(__u32 dwVolt)
 		TRes = (g_RAP_pull_up_R * dwVolt)
 				/ (g_RAP_pull_up_voltage - dwVolt);
 	}
+#endif
 	/* ------------------------------------------------------------------ */
 
 	g_btsmdpa_TemperatureR = TRes;
@@ -630,6 +641,19 @@ static int get_hw_btsmdpa_temp(void)
 	int ret = 0, data[4], i, ret_value = 0, ret_temp = 0, output;
 	int times = 1, Channel = g_RAP_ADC_channel; /* 6752=0(AUX_IN1_NTC) */
 	static int valid_temp;
+	#if defined(APPLY_AUXADC_CALI_DATA)
+	int auxadc_cali_temp;
+	#endif
+#endif
+#ifdef CONFIG_OF
+	struct device_node *dev_node;
+
+	dev_node = of_find_compatible_node(NULL, NULL, "mediatek,mtboard-thermistor1");
+	if (dev_node) {
+		if (of_property_read_bool(dev_node, "fixed_thermal")) {
+			return 40;
+		}
+	}
 #endif
 
 #if defined(CONFIG_MEDIATEK_MT6577_AUXADC)
@@ -641,14 +665,14 @@ static int get_hw_btsmdpa_temp(void)
 		return ret;
 	}
 
+#ifdef APPLY_PRECISE_BTS_TEMP
+	/*val * 1500 * 100 / 4096 = (val * 9375) >>  8 */
+	ret = (val * 9375) >> 8;
+#else
 	/*val * 1500 / 4096*/
 	ret = (val * 1500) >> 12;
-#else
-
-#if defined(APPLY_AUXADC_CALI_DATA)
-	int auxadc_cali_temp;
 #endif
-
+#else
 	if (IMM_IsAdcInitReady() == 0) {
 		mtkts_btsmdpa_printk(
 			"[thermal_auxadc_get_data]: AUXADC is not ready\n");
@@ -706,7 +730,11 @@ static int get_hw_btsmdpa_temp(void)
 	/* #define AUXADC_PRECISE      4096 // 12 bits */
 #if defined(APPLY_AUXADC_CALI_DATA)
 #else
+#ifdef APPLY_PRECISE_BTS_TEMP
+	ret = ret * 9375 >> 8;
+#else
 	ret = ret * 1500 / 4096;
+#endif
 #endif
 #endif /*CONFIG_MEDIATEK_MT6577_AUXADC*/
 
@@ -758,8 +786,10 @@ int mtkts_btsmdpa_get_hw_temp(void)
 
 	mutex_unlock(&BTSMDPA_lock);
 
+#ifndef CONFIG_SEC_PM
 	if (t_ret > 40000)	/* abnormal high temp */
 		mtkts_btsmdpa_printk("T_btsmdpa=%d\n", t_ret);
+#endif
 
 	mtkts_btsmdpa_dprintk("[%s] T_btsmdpa, %d\n", __func__,
 									t_ret);

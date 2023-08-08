@@ -15,7 +15,6 @@ extern const char linux_proc_banner[];
 
 extern char *log_buf_addr_get(void);
 extern u32 log_buf_len_get(void);
-extern bool mt_get_uartlog_status(void);
 
 #ifdef CONFIG_MTK_AEE_FEATURE
 extern void aee_wdt_zap_locks(void);
@@ -41,6 +40,9 @@ static inline int printk_get_level(const char *buffer)
 	if (buffer[0] == KERN_SOH_ASCII && buffer[1]) {
 		switch (buffer[1]) {
 		case '0' ... '7':
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+		case 'B' ... 'J':
+#endif
 		case 'd':	/* KERN_DEFAULT */
 		case 'c':	/* KERN_CONT */
 			return buffer[1];
@@ -326,28 +328,28 @@ extern asmlinkage void dump_stack(void) __cold;
 	&& defined CONFIG_PRINTK_MT_PREFIX \
 	&& defined CONFIG_DYNAMIC_DEBUG
 #define pr_emerg(fmt, ...) \
-	dynamic_pr_emerg(KLOG_MODNAME fmt, ##__VA_ARGS__) \
+	dynamic_pr_emerg(fmt, ##__VA_ARGS__) \
 
 #define pr_alert(fmt, ...) \
-	dynamic_pr_alert(KLOG_MODNAME fmt, ##__VA_ARGS__) \
+	dynamic_pr_alert(fmt, ##__VA_ARGS__) \
 
 #define pr_crit(fmt, ...) \
-	dynamic_pr_crit(KLOG_MODNAME fmt, ##__VA_ARGS__) \
+	dynamic_pr_crit(fmt, ##__VA_ARGS__) \
 
 #define pr_err(fmt, ...) \
-	dynamic_pr_err(KLOG_MODNAME fmt, ##__VA_ARGS__) \
+	dynamic_pr_err(fmt, ##__VA_ARGS__) \
 
 #define pr_warning(fmt, ...) \
-	dynamic_pr_warn(KLOG_MODNAME fmt, ##__VA_ARGS__) \
+	dynamic_pr_warn(fmt, ##__VA_ARGS__) \
 
 #define pr_warn(fmt, ...) \
-	dynamic_pr_warn(KLOG_MODNAME fmt, ##__VA_ARGS__) \
+	dynamic_pr_warn(fmt, ##__VA_ARGS__) \
 
 #define pr_notice(fmt, ...) \
-	dynamic_pr_notice(KLOG_MODNAME fmt, ##__VA_ARGS__) \
+	dynamic_pr_notice(fmt, ##__VA_ARGS__) \
 
 #define pr_info(fmt, ...) \
-	dynamic_pr_info(KLOG_MODNAME fmt, ##__VA_ARGS__) \
+	dynamic_pr_info(fmt, ##__VA_ARGS__) \
 
 #else
 #define pr_emerg(fmt, ...) \
@@ -375,6 +377,34 @@ extern asmlinkage void dump_stack(void) __cold;
 #define pr_cont(fmt, ...) \
 	printk(KERN_CONT fmt, ##__VA_ARGS__)
 
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+
+#define pr_auto(index, fmt, ...) \
+	printk(KERN_AUTO index pr_fmt(fmt), ##__VA_ARGS__)
+#define pr_auto_disable(index) \
+	sec_debug_auto_comment_log_disable(index)
+#define pr_auto_once(index) \
+	sec_debug_auto_comment_log_once(index)
+
+#define ASL1	KERN_AUTO1
+#define ASL2	KERN_AUTO2
+#define ASL3	KERN_AUTO3
+#define ASL4	KERN_AUTO4
+#define ASL5	KERN_AUTO5
+#define ASL6	KERN_AUTO6
+#define ASL7	KERN_AUTO7
+#define ASL8	KERN_AUTO8
+#define ASL9	KERN_AUTO9
+
+#else
+/* TODO : retain the original log level */
+#define pr_auto(level, fmt, ...) \
+	printk(KERN_EMERG pr_fmt(fmt), ##__VA_ARGS__)
+#define pr_auto_disable(index) do { } while (0)
+#define pr_auto_once(index) do { } while (0)
+
+#endif
+
 /* pr_devel() should produce zero code unless DEBUG is defined */
 #ifdef DEBUG
 #define pr_devel(fmt, ...) \
@@ -391,7 +421,7 @@ extern asmlinkage void dump_stack(void) __cold;
 
 /* dynamic_pr_debug() uses pr_fmt() internally so we don't need it here */
 #define pr_debug(fmt, ...) \
-	dynamic_pr_debug(KLOG_MODNAME fmt, ##__VA_ARGS__)
+	dynamic_pr_debug(fmt, ##__VA_ARGS__)
 #elif defined(DEBUG)
 #define pr_debug(fmt, ...) \
 	printk(KERN_DEBUG KLOG_MODNAME pr_fmt(fmt), ##__VA_ARGS__)

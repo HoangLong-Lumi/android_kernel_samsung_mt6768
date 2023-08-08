@@ -190,6 +190,10 @@ int update_userlimit_cpu_freq(int kicker, int num_cluster
 	}
 
 	for (i = 0; i < CPU_MAX_KIR; i++) {
+#ifdef CONFIG_CPU_FREQ_LIMIT
+		if (i == CPU_KIR_SEC_OVERLIMIT)
+			continue;
+#endif
 		for_each_perfmgr_clusters(j) {
 			final_freq[j].min
 				= MAX(freq_set[i][j].min, final_freq[j].min);
@@ -200,14 +204,32 @@ int update_userlimit_cpu_freq(int kicker, int num_cluster
 				MIN(freq_set[i][j].max, final_freq[j].max) :
 				MAX(freq_set[i][j].max, final_freq[j].max);
 #else
+#ifdef CONFIG_CPU_FREQ_LIMIT
+			final_freq[j].max
+				= final_freq[j].max != -1 &&
+				freq_set[i][j].max != -1 ?
+				MIN(freq_set[i][j].max, final_freq[j].max) :
+				MAX(freq_set[i][j].max, final_freq[j].max);
+#else
 			final_freq[j].max
 				= MAX(freq_set[i][j].max, final_freq[j].max);
 #endif
+#endif
+#ifndef CONFIG_CPU_FREQ_LIMIT
 			if (final_freq[j].min > final_freq[j].max &&
 					final_freq[j].max != -1)
 				final_freq[j].max = final_freq[j].min;
+#endif
 		}
 	}
+
+#ifdef CONFIG_CPU_FREQ_LIMIT
+	for_each_perfmgr_clusters(j) {
+		if (freq_set[CPU_KIR_SEC_LIMIT][j].min != -1 || freq_set[CPU_KIR_SEC_TOUCH][j].min != -1)
+			if (freq_set[CPU_KIR_SEC_OVERLIMIT][j].max != -1 && final_freq[j].max != -1)
+				final_freq[j].max = MAX(freq_set[CPU_KIR_SEC_OVERLIMIT][j].max, final_freq[j].max);
+	}
+#endif
 
 	for_each_perfmgr_clusters(i) {
 		current_freq[i].min = final_freq[i].min;
@@ -418,12 +440,28 @@ out1:
 
 static int perfmgr_perfserv_freq_proc_show(struct seq_file *m, void *v)
 {
+#ifdef CONFIG_SEC_PM
+	int i, k;
+
+	for_each_perfmgr_clusters(i)
+		seq_printf(m, "cluster %d min:%d max:%d\n",
+				i, current_freq[i].min, current_freq[i].max);
+
+	seq_printf(m, "\n");
+	for(k = 0; k < CPU_MAX_KIR; k++){
+		for_each_perfmgr_clusters(i)
+			seq_printf(m, "KIR[%d] cluster %d min:%d max:%d\n",
+					k, i, freq_set[k][i].min, freq_set[k][i].max);
+	}
+#else
 	int i;
 
 	for_each_perfmgr_clusters(i)
 		seq_printf(m, "cluster %d min:%d max:%d\n",
 				i, freq_set[CPU_KIR_PERF][i].min,
 				freq_set[CPU_KIR_PERF][i].max);
+#endif
+	
 	return 0;
 }
 /***************************************/
@@ -724,6 +762,7 @@ int cpu_ctrl_init(struct proc_dir_entry *parent)
 {
 	struct proc_dir_entry *boost_dir = NULL;
 	int i, j, ret = 0;
+	size_t idx;
 
 	struct pentry {
 		const char *name;
@@ -748,11 +787,11 @@ int cpu_ctrl_init(struct proc_dir_entry *parent)
 		pr_debug("boost_dir null\n ");
 
 	/* create procfs */
-	for (i = 0; i < ARRAY_SIZE(entries); i++) {
-		if (!proc_create(entries[i].name, 0644,
-					boost_dir, entries[i].fops)) {
+	for (idx = 0; idx < ARRAY_SIZE(entries); idx++) {
+		if (!proc_create(entries[idx].name, 0644,
+					boost_dir, entries[idx].fops)) {
 			pr_debug("%s(), create /cpu_ctrl%s failed\n",
-					__func__, entries[i].name);
+					__func__, entries[idx].name);
 			ret = -EINVAL;
 			goto out;
 		}

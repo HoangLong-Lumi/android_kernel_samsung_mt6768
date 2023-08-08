@@ -186,4 +186,8 @@ config MTK_RT_THROTTLE_MON
 	  When rt throttle activated print 5 longest execusion time rt tasks.
 	  Say Y here to enable rt throttle monitor.
 	  If you are not sure about whether to enable it or not, please set n.
+
+config PRIO_LIMIT_HMP_BOOST
+	bool "Limit big core usage with priority"
+	default n
 endmenu

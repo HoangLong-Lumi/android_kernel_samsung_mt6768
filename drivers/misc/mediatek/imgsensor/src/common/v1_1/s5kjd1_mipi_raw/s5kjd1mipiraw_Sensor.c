@@ -59,6 +59,7 @@
 static DEFINE_SPINLOCK(imgsensor_drv_lock);
 
 #define MULTI_WRITE 1
+
 #if MULTI_WRITE
 static const int I2C_BUFFER_LEN = 1020; /*trans# max is 255, each 4 bytes*/
 #else
@@ -206,14 +207,14 @@ static struct imgsensor_struct imgsensor = {
 /* Sensor output window information */
 static struct SENSOR_WINSIZE_INFO_STRUCT imgsensor_winsize_info[7] = {
 	/* Preview */
-	{6560, 4920, 0, 0, 6560, 4920, 6560, 4920,
+	{6560, 4920, 0, 0, 6560, 4920, 3280, 2460,
 	    0,   0, 3280, 2460, 0, 0, 3280, 2460},
 	/* capture */
 	{6560, 4920, 0, 0, 6560, 4920, 6560, 4920,
 	    0,   0, 6560, 4920, 0, 0, 6560, 4920},
 	/* video*/
 	{6560, 4920, 0, 0, 6560, 4920, 3280, 2460,
-	   0,   0, 1920, 1080, 0, 0, 1920, 1080},
+	 680, 690, 1920, 1080, 0, 0, 1920, 1080},
 	/* hight speed video */
 	{6560, 4920, 0, 0, 6560, 4920, 3280, 2460,
 	   0,   0, 3280, 2460, 0, 0, 3280, 2460},
@@ -225,7 +226,7 @@ static struct SENSOR_WINSIZE_INFO_STRUCT imgsensor_winsize_info[7] = {
 	   0,   0, 3280, 2460, 0, 0, 3280, 2460},
 	/* custom2 normal video staggered HDR */
 	{6560, 4920, 0, 0, 6560, 4920, 3280, 2460,
-	   0,   0, 1920, 1080, 0, 0, 1920, 1080}
+	 680, 690, 1920, 1080, 0, 0, 1920, 1080}
 };
 
 static struct SENSOR_VC_INFO2_STRUCT SENSOR_VC_INFO2[5] = {
@@ -746,7 +747,6 @@ static void night_mode(kal_bool enable)
 {
 	/*No Need to implement this function*/
 }				/*      night_mode      */
-
 
 kal_uint16 addr_data_pair_init_jd1[] = {
 	0x0A02, 0x01F4,
@@ -5275,7 +5275,6 @@ static kal_uint32 get_info(enum MSDK_SCENARIO_ID_ENUM scenario_id,
 	return ERROR_NONE;
 }				/*    get_info  */
 
-
 static kal_uint32 seamless_switch(enum MSDK_SCENARIO_ID_ENUM scenario_id,
 	kal_uint32 shutter, kal_uint32 gain,
 	kal_uint32 shutter_2ndframe, kal_uint32 gain_2ndframe)
@@ -5413,7 +5412,6 @@ static kal_uint32 seamless_switch(enum MSDK_SCENARIO_ID_ENUM scenario_id,
 
 	return 0;
 }
-
 
 static kal_uint32 control(enum MSDK_SCENARIO_ID_ENUM scenario_id,
 	MSDK_SENSOR_EXPOSURE_WINDOW_STRUCT *image_window,
@@ -6140,7 +6138,7 @@ static kal_uint32 feature_control(MSDK_SENSOR_FEATURE_ENUM feature_id,
 			case HDR_RAW_STAGGER_3EXP:
 				*(feature_data + 2) = MSDK_SCENARIO_ID_CUSTOM1;
 			default:
-					break;
+				break;
 			}
 		}
 		if (*feature_data == MSDK_SCENARIO_ID_VIDEO_PREVIEW) {

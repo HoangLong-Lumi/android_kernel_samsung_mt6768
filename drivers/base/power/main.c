@@ -35,7 +35,6 @@
 #include <linux/cpuidle.h>
 #include <linux/timer.h>
 #include <linux/wakeup_reason.h>
-
 #include "../base.h"
 #include "power.h"
 #ifdef CONFIG_MTK_RAM_CONSOLE

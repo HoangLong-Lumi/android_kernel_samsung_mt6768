@@ -46,6 +46,10 @@
 #include "ged_ge.h"
 #include "ged_gpu_tuner.h"
 
+#ifdef GED_SKI_SUPPORT
+#include "ged_ski.h"
+#endif
+
 #define GED_DRIVER_DEVICE_NAME "ged"
 
 static GED_LOG_BUF_HANDLE ghLogBuf_GPU;
@@ -230,6 +234,10 @@ static long ged_dispatch(struct file *pFile,
 			VALIDATE_ARG(QUERY_DVFS_FREQ_PRED);
 			ret = ged_bridge_query_dvfs_freq_pred(pvIn, pvOut);
 			break;
+		case GED_BRIDGE_COMMAND_QUERY_GPU_DVFS_INFO:
+			VALIDATE_ARG(QUERY_GPU_DVFS_INFO);
+			ret = ged_bridge_query_gpu_dvfs_info(pvIn, pvOut);
+			break;
 		case GED_BRIDGE_COMMAND_GE_ALLOC:
 			VALIDATE_ARG(GE_ALLOC);
 			ret = ged_bridge_ge_alloc(pvIn, pvOut);
@@ -356,11 +364,13 @@ static int ged_pdrv_probe(struct platform_device *pdev)
 {
 #ifdef CONFIG_MTK_GPU_OPP_STATS_SUPPORT
 	int ret;
+
 	ret = ged_dvfs_init_opp_cost();
 	if (ret) {
 		GED_LOGE("@%s: failed to probe ged driver (%d)\n",
 		__func__, ret);
 	}
+
 	return ret;
 #else
 	return 0;
@@ -427,6 +437,10 @@ static void ged_exit(void)
 	ghLogBuf_GPU = 0;
 #endif /* GED_BUFFER_LOG_DISABLE */
 
+#ifdef GED_SKI_SUPPORT
+	ged_ski_exit();
+#endif
+
 	ged_gpu_tuner_exit();
 
 	ged_kpi_system_exit();
@@ -450,7 +464,6 @@ static void ged_exit(void)
 	remove_proc_entry(GED_DRIVER_DEVICE_NAME, NULL);
 
 	platform_driver_unregister(&g_ged_pdrv);
-
 }
 
 static int ged_init(void)
@@ -519,6 +532,14 @@ static int ged_init(void)
 		GED_LOGE("ged: failed to init GPU Tuner!\n");
 		goto ERROR;
 	}
+
+#ifdef GED_SKI_SUPPORT
+	err = ged_ski_init();
+	if (unlikely(err != GED_OK)) {
+		GED_LOGE("ged: failed to init ski!\n");
+		goto ERROR;
+	}
+#endif
 
 #ifndef GED_BUFFER_LOG_DISABLE
 	ghLogBuf_GPU = ged_log_buf_alloc(512, 128 * 512,

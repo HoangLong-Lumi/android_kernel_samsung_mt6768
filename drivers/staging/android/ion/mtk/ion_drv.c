@@ -66,6 +66,13 @@
 #define DEFAULT_PAGE_SIZE 0x1000
 #define PAGE_ORDER 12
 
+#define ION_CACHEOPS_IS_WRITE(type)			\
+	((type) == ION_CACHE_CLEAN_BY_RANGE ||		\
+	 (type) == ION_CACHE_CLEAN_BY_RANGE_USE_PA ||	\
+	 (type) == ION_CACHE_CLEAN_ALL ||		\
+	 (type) == ION_CACHE_FLUSH_BY_RANGE ||		\
+	 (type) == ION_CACHE_FLUSH_BY_RANGE_USE_PA ||	\
+	 (type) == ION_CACHE_FLUSH_ALL)
 struct ion_device *g_ion_device;
 EXPORT_SYMBOL(g_ion_device);
 
@@ -238,46 +245,56 @@ static int __ion_is_user_va(unsigned long va, size_t size)
 static int __cache_sync_by_range(struct ion_client *client,
 				 enum ION_CACHE_SYNC_TYPE sync_type,
 				 unsigned long start, size_t size,
-				 int from_kernel)
+				 int is_kernel_addr)
 {
 	char ion_name[200];
+	int ret = 0;
 
 	/* for minimum change, here do nothing for kernel flow
 	 * when we need check kernel flow, also need check source and valid
-	 * such as "if (from_kernel && !is_kernel_addr)"
-	 *userspace va check
+	 * such as "if (!is_kernel_addr)"
 	 */
-	if (!from_kernel && !__ion_is_user_va(start, size)) {
+	if (sync_type == ION_CACHE_CLEAN_BY_RANGE_USE_PA ||
+	    sync_type == ION_CACHE_INVALID_BY_RANGE_USE_PA ||
+	    sync_type == ION_CACHE_FLUSH_BY_RANGE_USE_PA ||
+	    is_kernel_addr)
+		goto start_sync;
+
+	/* userspace va check */
+	ret  = __ion_is_user_va(start, size);
+	if (!ret) {
 		scnprintf(ion_name, 199,
-			  "CRDISPATCH_KEY(%s),(%d) sz/addr %zx/%lx from_k:%d",
+			  "CRDISPATCH_KEY(%s),(%d) sz/addr %zx/%lx is_kernel_addr:%d",
 			  (*client->dbg_name) ?
 			  client->dbg_name : client->name,
-			  (unsigned int)current->pid, size, start, from_kernel);
+			  (unsigned int)current->pid, size, start, is_kernel_addr);
 		IONMSG("%s %s\n", __func__, ion_name);
 		//aee_kernel_warning(ion_name, "[ION]: Wrong Address Range");
 		return -EFAULT;
 	}
+
+start_sync:
 
 	__ion_cache_mmp_start(sync_type, size, start);
 
 	switch (sync_type) {
 	case ION_CACHE_CLEAN_BY_RANGE:
 	case ION_CACHE_CLEAN_BY_RANGE_USE_PA:
-		if (!from_kernel)
+		if (!is_kernel_addr)
 			__clean_dcache_user_area((void *)start, size);
 		else
 			__clean_dcache_area_poc((void *)start, size);
 		break;
 	case ION_CACHE_FLUSH_BY_RANGE:
 	case ION_CACHE_FLUSH_BY_RANGE_USE_PA:
-		if (!from_kernel)
+		if (!is_kernel_addr)
 			__flush_dcache_user_area((void *)start, size);
 		else
 			__flush_dcache_area((void *)start, size);
 		break;
 	case ION_CACHE_INVALID_BY_RANGE:
 	case ION_CACHE_INVALID_BY_RANGE_USE_PA:
-		if (!from_kernel)
+		if (!is_kernel_addr)
 			__inval_dcache_user_area((void *)start, size);
 		else
 			__inval_dcache_area((void *)start, size);
@@ -408,6 +425,7 @@ static long ion_sys_cache_sync(struct ion_client *client,
 	unsigned long kernel_size = 0;
 	struct sg_table *table;
 	struct ion_heap *heap = NULL;
+	int is_kernel_addr = from_kernel;
 
 	/* Get kernel handle
 	 * For cache sync all cases, some users
@@ -425,6 +443,12 @@ static long ion_sys_cache_sync(struct ion_client *client,
 		return -EINVAL;
 	}
 
+	if (kernel_handle->buffer->size < param->size) {
+		IONMSG("%s error, sync size is larger than buf_sz:%zu\n",
+		       __func__, kernel_handle->buffer->size);
+		goto err;
+	}
+
 	buffer = kernel_handle->buffer;
 	sync_size = param->size;
 
@@ -434,40 +458,44 @@ static long ion_sys_cache_sync(struct ion_client *client,
 	case ION_CACHE_FLUSH_BY_RANGE:
 
 		sync_va = (unsigned long)param->va;
+
 		if (sync_size == 0 || sync_va == 0) {
 			/* whole buffer cache sync
 			 * get sync_va and sync_size here
 			 */
 			sync_size = buffer->size;
-			from_kernel = 1;
-			if (buffer->kmap_cnt != 0) {
-				sync_va = (unsigned long)buffer->vaddr;
-			} else {
+
 				/* Do kernel map and do cache sync
 				 * 32bit project, vmap space is small,
 				 *    4MB as a boundary for mapping.
 				 * 64bit vmap space is huge
 				 */
 #ifdef CONFIG_ARM64
-				sync_va = (unsigned long)
-					  ion_map_kernel(client, kernel_handle);
+			sync_va = (unsigned long)ion_map_kernel(client,
+								kernel_handle);
+			is_kernel_addr = 1;
 				ion_need_unmap_flag = 1;
 #else
 				if (sync_size <= SZ_4M) {
 					sync_va = (unsigned long)
 					ion_map_kernel(client, kernel_handle);
+				is_kernel_addr = 1;
 					ion_need_unmap_flag = 1;
 				} else {
 					ret =
-					ion_sys_cache_sync_buf(client,
-							       sync_type,
+				ion_sys_cache_sync_buf(client, sync_type,
 							       kernel_handle);
 					goto out;
 				}
 #endif
+			if (IS_ERR_OR_NULL(ERR_PTR((long)sync_va))) {
+				IONMSG("%s #%d: map failed\n", __func__,
+				       __LINE__);
+				ret = -ENOMEM;
+				goto err;
 			}
 		}
-			break;
+		break;
 
 	/* range PA(means mva) mode, need map
 	 * NOTICE: m4u_mva_map_kernel only support m4u0
@@ -497,7 +525,7 @@ static long ion_sys_cache_sync(struct ion_client *client,
 		if (ret)
 			goto err;
 		sync_va = kernel_va;
-		from_kernel = 1;
+		is_kernel_addr = 1;
 		break;
 	default:
 		ret = -EINVAL;
@@ -505,7 +533,7 @@ static long ion_sys_cache_sync(struct ion_client *client,
 	}
 
 	ret = __cache_sync_by_range(client, sync_type,
-				    sync_va, sync_size, from_kernel);
+				    sync_va, sync_size, is_kernel_addr);
 	if (ret < 0)
 		goto err;
 
@@ -563,12 +591,28 @@ static long ion_sys_ioctl(struct ion_client *client, unsigned int cmd,
 	ion_phys_addr_t phy_addr;
 
 	ION_FUNC_ENTER;
-	if (from_kernel)
+	if (!arg) {
+		IONMSG("%s:err arg = NULL. %s(%s),%d, k:%d\n",
+		       __func__, client->name, client->dbg_name,
+		       client->pid, from_kernel);
+		ret = -EINVAL;
+		goto err;
+	}
+
+	if (from_kernel) {
 		param = *(struct ion_sys_data *)arg;
-	else
+	} else {
 		ret_copy =
 		    copy_from_user(&param, (void __user *)arg,
 				   sizeof(struct ion_sys_data));
+		if (ret_copy != 0) {
+			IONMSG("%s:err arg copy failed, ret_copy = %lu. %s(%s),%d, k:%d\n",
+			       __func__, ret_copy, client->name, client->dbg_name,
+			       client->pid, from_kernel);
+			ret = -EFAULT;
+			goto err;
+		}
+	}
 
 	switch (param.sys_cmd) {
 	case ION_SYS_CACHE_SYNC:
@@ -608,9 +652,45 @@ static long ion_sys_ioctl(struct ion_client *client, unsigned int cmd,
 			ion_drv_put_kernel_handle(kernel_handle);
 		}
 		break;
+	case ION_SYS_GET_IOVA:
+	{
+		struct ion_buffer *buffer;
+		struct ion_handle *kernel_handle;
+		ion_phys_addr_t real_phys = 0;
+		size_t len = 0;
+
+		kernel_handle =
+			ion_drv_get_handle(client,
+					   param.get_phys_param.handle,
+					   param.get_phys_param.kernel_handle,
+					   from_kernel);
+		if (IS_ERR(kernel_handle)) {
+			IONMSG("ION_SYS_GET_IOVA fail!\n");
+			ret = -EINVAL;
+			break;
+		}
+		buffer = ion_handle_buffer(kernel_handle);
+		if ((int)buffer->heap->type != ION_HEAP_TYPE_DMA_RESERVED) {
+			IONMSG("heap %d don't support get read phys\n",
+			       buffer->heap->type);
+			ion_drv_put_kernel_handle(kernel_handle);
+			param.get_phys_param.phy_addr = 0;
+			param.get_phys_param.len = 0;
+			ret = -EINVAL;
+			break;
+		}
+
+		ret = ion_dma_reserved_heap_iova(buffer->heap,
+						 buffer, &real_phys, &len);
+		param.get_phys_param.phy_addr = real_phys;
+		param.get_phys_param.len = len;
+
+		ion_drv_put_kernel_handle(kernel_handle);
+	}
+		break;
 	case ION_SYS_SET_CLIENT_NAME:
-		ion_sys_copy_client_name(param.client_name_param.name,
-					 client->dbg_name);
+		ret = ion_sys_copy_client_name(param.client_name_param.name,
+					       client->dbg_name);
 		break;
 	default:
 		IONMSG(
@@ -619,12 +699,22 @@ static long ion_sys_ioctl(struct ion_client *client, unsigned int cmd,
 		ret = -EFAULT;
 		break;
 	}
+
+	if (ret) {
+		IONMSG("[%s]:failed to finish io-cmd(%d). %s(%s),%d, k:%d\n",
+		       __func__, param.sys_cmd,
+		       client->name, client->dbg_name,
+		       client->pid, from_kernel);
+		goto err;
+	}
+
 	if (from_kernel)
 		*(struct ion_sys_data *)arg = param;
 	else
 		ret_copy =
 		    copy_to_user((void __user *)arg, &param,
 				 sizeof(struct ion_sys_data));
+err:
 	ION_FUNC_LEAVE;
 	return ret;
 }
@@ -658,6 +748,35 @@ static long ion_custom_ioctl(struct ion_client *client, unsigned int cmd,
 			     unsigned long arg)
 {
 	return _ion_ioctl(client, cmd, arg, 0);
+}
+
+int dump_heap_info_to_log(struct ion_heap *heap, int log_level)
+{
+	struct seq_file s;
+	char *buf;
+
+	if (!heap->debug_show)
+		return 0;
+
+	buf = kzalloc(PAGE_SIZE, GFP_KERNEL | __GFP_NOWARN);
+	if (!buf)
+		return -ENOMEM;
+
+	memset(&s, 0, sizeof(s));
+	s.buf = buf;
+	s.size = PAGE_SIZE;
+	mutex_init(&s.lock);
+
+	if (heap->debug_show)
+		heap->debug_show(heap, &s, NULL);
+
+	if (log_level <= LOGLEVEL_WARNING)
+		pr_info("%s\n", s.buf);
+	else
+		pr_debug("%s\n", s.buf);
+
+	kfree(s.buf);
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -705,8 +824,14 @@ struct ion_heap *ion_mtk_heap_create(struct ion_platform_heap *heap_data)
 	case ION_HEAP_TYPE_MULTIMEDIA:
 		heap = ion_mm_heap_create(heap_data);
 		break;
+	case ION_HEAP_TYPE_FB:
+		heap = ion_fb_heap_create(heap_data);
+		break;
 	case ION_HEAP_TYPE_MULTIMEDIA_SEC:
 		heap = ion_sec_heap_create(heap_data);
+		break;
+	case ION_HEAP_TYPE_DMA_RESERVED:
+		heap = ion_dma_reserved_heap_create(heap_data);
 		break;
 	default:
 		heap = ion_heap_create(heap_data);
@@ -738,6 +863,9 @@ void ion_mtk_heap_destroy(struct ion_heap *heap)
 		break;
 	case ION_HEAP_TYPE_MULTIMEDIA_SEC:
 		ion_sec_heap_destroy(heap);
+		break;
+	case ION_HEAP_TYPE_DMA_RESERVED:
+		ion_dma_reserved_heap_destroy(heap);
 		break;
 	default:
 		ion_heap_destroy(heap);
@@ -874,6 +1002,10 @@ static int ion_drv_probe(struct platform_device *pdev)
 		return -EPROBE_DEFER;
 	}
 	pdata = (struct ion_platform_data *)of_device_get_match_data(dev);
+	if (!pdata) {
+		IONMSG("get match data fail\n");
+		return EPROBE_DEFER;
+	}
 #else
 
 	pdata = pdev->dev.platform_data;
@@ -1061,6 +1193,26 @@ static struct ion_platform_heap ion_drv_platform_heaps[] = {
 	 .align = 0x1000, /* this must not be 0 if enable */
 	 .priv = NULL,
 	 },
+	{
+	 .type = (unsigned int)ION_HEAP_TYPE_DMA_RESERVED,
+	 .id = ION_HEAP_TYPE_DMA_RESERVED,
+	 .name = "ion_dma_reserved_heap",
+	 .base = 0,
+	 .size = 3 * 1024 * 1024, /* size <= 4M !!!*/
+	 .align = 0x1000,
+	 .priv = NULL,
+	 },
+#ifdef CONFIG_ION_RBIN_HEAP
+	{
+	 .type = (unsigned int)ION_HEAP_TYPE_RBIN,
+	 .id = ION_HEAP_TYPE_RBIN,
+	 .name = "ion_rbin_heap",
+	 .base = 0,
+	 .size = 0,
+	 .align = 0,
+	 .priv = NULL,
+	 },
+#endif
 };
 
 struct ion_platform_data ion_drv_platform_data = {
@@ -1120,6 +1272,33 @@ static int __init ion_reserve_memory_to_camera(
 RESERVEDMEM_OF_DECLARE(ion_camera_reserve,
 		       "mediatek,ion-carveout-heap",
 		       ion_reserve_memory_to_camera);
+
+#ifdef CONFIG_ION_RBIN_HEAP
+static int __init ion_reserve_memory_to_rbin(
+	struct reserved_mem *mem)
+{
+	int i;
+
+	for (i = 0; i < ion_drv_platform_data.nr; i++) {
+		if (ion_drv_platform_data.heaps[i].id ==
+		    ION_HEAP_TYPE_RBIN) {
+			ion_drv_platform_data.heaps[i].base =
+				mem->base;
+			ion_drv_platform_data.heaps[i].size =
+				mem->size;
+		}
+	}
+	pr_info("%s: name:%s,base:%llx,size:0x%llx\n",
+		__func__, mem->name,
+		(unsigned long long)mem->base,
+		(unsigned long long)mem->size);
+	return 0;
+}
+
+RESERVEDMEM_OF_DECLARE(ion_camera_rbin,
+		       "mediatek,ion-rbin-heap",
+		       ion_reserve_memory_to_rbin);
+#endif
 
 static int __init ion_init(void)
 {

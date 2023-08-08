@@ -3498,9 +3498,6 @@ update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
 {
 	struct sched_avg *sa = &cfs_rq->avg;
 	int decayed, removed_load = 0, removed_util = 0;
-	struct rq *rq = rq_of(cfs_rq);
-	bool is_clamped = false;
-	int clamp_id = 0;
 
 	if (atomic_long_read(&cfs_rq->removed_load_avg)) {
 		s64 r = atomic_long_xchg(&cfs_rq->removed_load_avg, 0);
@@ -3525,12 +3522,7 @@ update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
 	cfs_rq->load_last_update_time_copy = sa->last_update_time;
 #endif
 
-	for (clamp_id = UCLAMP_MIN; clamp_id < UCLAMP_CNT; clamp_id++) {
-		if (rq && rq->uclamp.value[clamp_id] != uclamp_none(clamp_id))
-			is_clamped = true;
-	}
-
-	if (decayed || removed_util || is_clamped)
+	if (decayed || removed_util)
 		cfs_rq_util_change(cfs_rq);
 
 	return decayed || removed_load;
@@ -6658,7 +6650,7 @@ static inline int select_energy_cpu_idx(struct energy_env *eenv)
 	for (cpu_idx = EAS_CPU_PRV; cpu_idx < eenv->max_cpu_count; ++cpu_idx) {
 		int cpu = eenv->cpu[cpu_idx].cpu_id;
 
-		if (cpu < 0 && cpu_isolated(cpu))
+		if (cpu < 0 || cpu_isolated(cpu))
 			continue;
 		cpumask_set_cpu(cpu, &eenv->cpus_mask);
 	}
@@ -7546,7 +7538,7 @@ static inline int find_best_target(struct task_struct *p, int *backup_cpu,
 	unsigned long target_capacity = ULONG_MAX;
 	unsigned long min_wake_util = ULONG_MAX;
 	unsigned long target_max_spare_cap = 0;
-	unsigned long target_orig_max_spare_cap = 0;
+	long target_orig_max_spare_cap = 0;
 	unsigned long target_util = ULONG_MAX;
 	unsigned long best_active_util = ULONG_MAX;
 	unsigned long max_capacity = cluster_max_capacity();
@@ -8359,7 +8351,11 @@ SELECT_TASK_RQ_FAIR(struct task_struct *p, int prev_cpu, int sd_flag,
 	int sync = wake_flags & WF_SYNC;
 	int select_reason = LB_PREV;
 
+#ifdef CONFIG_PRIO_LIMIT_HMP_BOOST
+	if (should_hmp(cpu) && p->mm && (sd_flag & SD_BALANCE_FORK) && !task_low_priority(p->prio)) {
+#else
 	if (should_hmp(cpu) && p->mm && (sd_flag & SD_BALANCE_FORK)) {
+#endif
 		int hmp_cpu;
 		/* HMP fork balance:
 		 * always put non-kernel forking tasks on a big domain
@@ -8485,7 +8481,7 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag,
 	cpu = (result & LB_CPU_MASK);
 
 	trace_sched_select_task_rq(p, result, prev_cpu, cpu,
-			task_util(p), boosted_task_util(p),
+			task_util_est(p), boosted_task_util(p),
 			(schedtune_prefer_idle(p) > 0), wake_flags);
 	return cpu;
 
@@ -9173,6 +9169,12 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 	int tsk_cache_hot;
 
 	lockdep_assert_held(&env->src_rq->lock);
+
+#ifdef CONFIG_PRIO_LIMIT_HMP_BOOST
+	if (should_hmp(env->src_cpu) && task_low_priority(p->prio) &&
+	     capacity_of(env->src_cpu) < capacity_of(env->dst_cpu))
+		return 0;
+#endif
 
 	/*
 	 * We do not migrate tasks that are:
@@ -11135,6 +11137,14 @@ more_balance:
 				env.flags |= LBF_ALL_PINNED;
 				goto out_one_pinned;
 			}
+#ifdef CONFIG_PRIO_LIMIT_HMP_BOOST
+			if ((capacity_of(env.src_cpu) < capacity_of(env.dst_cpu)) &&
+			      should_hmp(env.src_cpu) && task_low_priority(busiest->curr->prio)) {
+				raw_spin_unlock_irqrestore(&busiest->lock, flags);
+				env.flags |= LBF_ALL_PINNED;
+				goto out_one_pinned;
+			}
+#endif
 #endif
 
 			/*

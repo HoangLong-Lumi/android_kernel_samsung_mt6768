@@ -661,6 +661,7 @@ static int compat_get_ion_sys_data(
 		break;
 	}
 	case ION_SYS_GET_PHYS:
+	case ION_SYS_GET_IOVA:
 	{
 		err |= compat_get_ion_sys_get_phys_param(
 			&data32->get_phys_param,
@@ -698,6 +699,7 @@ static int compat_put_ion_sys_data(
 
 	switch (sys_cmd) {
 	case ION_SYS_GET_PHYS:
+	case ION_SYS_GET_IOVA:
 	{
 		err |= compat_put_ion_sys_get_phys_param(
 			&data32->get_phys_param, &data->get_phys_param);

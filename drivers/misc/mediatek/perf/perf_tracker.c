@@ -55,7 +55,7 @@
 #include <net/tcp.h>
 #endif
 
-#ifdef CONFIG_MTK_GAUGE_VERSION
+#if CONFIG_MTK_GAUGE_VERSION == 30
 #include <mt-plat/mtk_battery.h>
 
 static void fuel_gauge_handler(struct work_struct *work);
@@ -96,6 +96,7 @@ struct mtk_btag_mictx_iostat_struct {
 	__u32 reqcnt_r;  /* request count: read */
 	__u32 reqcnt_w;  /* request count: write */
 	__u16 wl;        /* storage device workload (%) */
+	__u16 top;       /* ratio of request (size) by top-app */
 	__u16 q_depth;   /* storage cmdq queue depth */
 };
 #endif
@@ -112,7 +113,7 @@ int __attribute__((weak)) mtk_btag_mictx_get_data(
 }
 #endif
 
-#ifdef CONFIG_MTK_GAUGE_VERSION
+#if CONFIG_MTK_GAUGE_VERSION == 30
 static void fuel_gauge_handler(struct work_struct *work)
 {
 	int curr, volt;
@@ -330,13 +331,14 @@ void __perf_tracker(u64 wallclock,
 			iostat->tp_req_w, iostat->tp_all_w,
 			iostat->reqsize_w, iostat->reqcnt_w,
 			iostat->duration, iostat->q_depth,
+			iostat->top,
 #else
-			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 #endif
 			stall);
 }
 
-#ifdef CONFIG_MTK_GAUGE_VERSION
+#if CONFIG_MTK_GAUGE_VERSION == 30
 static ssize_t show_fuel_gauge_enable(struct kobject *kobj,
 		struct kobj_attribute *attr, char *buf)
 {
@@ -564,7 +566,7 @@ static ssize_t store_perf_net_enable(struct kobject *kobj,
 
 static struct kobj_attribute perf_enable_attr =
 __ATTR(enable, 0600, show_perf_enable, store_perf_enable);
-#ifdef CONFIG_MTK_GAUGE_VERSION
+#if CONFIG_MTK_GAUGE_VERSION == 30
 static struct kobj_attribute perf_fuel_gauge_enable_attr =
 __ATTR(fuel_gauge_enable, 0600,
 	show_fuel_gauge_enable, store_fuel_gauge_enable);
@@ -585,7 +587,7 @@ __ATTR(net_pkt_enable, 0600, show_perf_net_enable, store_perf_net_enable);
 
 static struct attribute *perf_attrs[] = {
 	&perf_enable_attr.attr,
-#ifdef CONFIG_MTK_GAUGE_VERSION
+#if CONFIG_MTK_GAUGE_VERSION == 30
 	&perf_fuel_gauge_enable_attr.attr,
 	&perf_fuel_gauge_period_attr.attr,
 #endif
